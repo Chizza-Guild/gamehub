@@ -7,7 +7,7 @@ export default function Home() {
 		<div>
 			Hello - 
 
-            <button>Maze game: <Link href="/games/labyrinth">Maze</Link></button>
+            <button>Maze game: <Link href="/games/maze">Maze</Link></button>
 		</div>
         
 	);
