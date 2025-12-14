@@ -25,6 +25,7 @@ type Lobby = {
 	code: string;
 	game_type: string | null;
 	settings: LobbySettings;
+	lobby_info?: any;
 };
 
 type Message = {
@@ -276,8 +277,26 @@ export default function LobbyPage() {
 	const handleStartGame = async () => {
 		if (!lobby || !gameType || !isAdmin) return;
 
-		// Update lobby with selected game type
-		await supabase.from("lobbies").update({ game_type: gameType }).eq("id", lobby.id);
+		// Prepare lobby_info with game state
+		const lobbyInfo = {
+			players: players.map(p => ({
+				id: p.player_id,
+				name: p.name,
+				is_admin: p.is_admin,
+			})),
+			game_state: {
+				[gameType]: {
+					status: 'countdown',
+					started_at: new Date().toISOString(),
+				},
+			},
+		};
+
+		// Update lobby with selected game type and game state
+		await supabase.from("lobbies").update({
+			game_type: gameType,
+			lobby_info: lobbyInfo,
+		}).eq("id", lobby.id);
 
 		// Navigate admin to the game page
 		router.push(`/games/${gameType}?code=${lobby.code}`);
