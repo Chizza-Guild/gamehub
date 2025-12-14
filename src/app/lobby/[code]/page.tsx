@@ -81,49 +81,72 @@ export default function LobbyPage() {
 		if (!lobby || !currentPlayer) return;
 
 		const checkStalePlayers = async () => {
+			// Fetch the latest lobby data to get current player states
+			const { data: freshLobby, error: fetchError } = await supabase.from("lobbies").select("*").eq("id", lobby.id).single();
+
+			if (fetchError || !freshLobby) {
+				console.error("Failed to fetch lobby for cleanup check:", fetchError);
+				return;
+			}
+
 			const now = Date.now();
 			const staleThreshold = 30000; // 30 seconds
 
 			// Find players who haven't been seen in 30+ seconds
-			const activePlayers = lobby.lobby_info.players.filter(p => {
+			const activePlayers = freshLobby.lobby_info.players.filter((p: Player) => {
 				const timeSinceLastSeen = now - (p.lastSeen || p.joinedAt);
-				return timeSinceLastSeen < staleThreshold;
+				const isStale = timeSinceLastSeen >= staleThreshold;
+				if (isStale) {
+					console.log(`Player ${p.name} is stale (${Math.floor(timeSinceLastSeen / 1000)}s since last seen)`);
+				}
+				return !isStale;
 			});
 
 			// If players were removed
-			if (activePlayers.length < lobby.lobby_info.players.length) {
-				console.log(`Removing ${lobby.lobby_info.players.length - activePlayers.length} stale player(s)`);
+			if (activePlayers.length < freshLobby.lobby_info.players.length) {
+				console.log(`Removing ${freshLobby.lobby_info.players.length - activePlayers.length} stale player(s)`);
 
 				// If no players left, delete the lobby
 				if (activePlayers.length === 0) {
+					console.log("No active players left, deleting lobby");
 					await supabase.from("lobbies").delete().eq("id", lobby.id);
 					router.push("/");
 					return;
 				}
 
 				// Update lobby with active players only
-				let updatedInfo = { ...lobby.lobby_info, players: activePlayers };
+				let updatedInfo = { ...freshLobby.lobby_info, players: activePlayers };
 
 				// If admin was removed, assign new admin
-				const adminStillActive = activePlayers.some(p => p.id === lobby.lobby_info.adminId);
+				const adminStillActive = activePlayers.some((p: Player) => p.id === freshLobby.lobby_info.adminId);
 				if (!adminStillActive) {
 					updatedInfo.adminId = activePlayers[0].id;
 					console.log(`Admin was stale, new admin: ${activePlayers[0].name}`);
 				}
 
-				await supabase.from("lobbies").update({ lobby_info: updatedInfo }).eq("id", lobby.id);
+				const { error: updateError } = await supabase.from("lobbies").update({ lobby_info: updatedInfo }).eq("id", lobby.id);
+
+				if (updateError) {
+					console.error("Failed to update lobby after removing stale players:", updateError);
+				} else {
+					console.log("Successfully removed stale players");
+				}
 			}
 		};
+
+		// Run initial check after 15 seconds
+		const initialTimeout = setTimeout(checkStalePlayers, 15000);
 
 		// Check for stale players every 15 seconds
 		cleanupIntervalRef.current = setInterval(checkStalePlayers, 15000);
 
 		return () => {
+			clearTimeout(initialTimeout);
 			if (cleanupIntervalRef.current) {
 				clearInterval(cleanupIntervalRef.current);
 			}
 		};
-	}, [lobby, currentPlayer]);
+	}, [lobby?.id, currentPlayer?.id]);
 
 	// Handle player cleanup on disconnect (Layer 3)
 	useEffect(() => {
