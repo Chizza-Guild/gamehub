@@ -174,7 +174,7 @@ export default function Home() {
 
 			{/* Create Lobby Button */}
 			<div className="mb-8">
-				<button onClick={createLobby} disabled={creating} className="px-6 py-3 bg-green-600 hover:bg-green-700 rounded-lg font-bold text-lg transition disabled:bg-gray-600 disabled:cursor-not-allowed">
+				<button onClick={createLobby} disabled={creating} className="px-6 py-3 bg-green-600 hover:bg-green-700 rounded-lg font-bold text-lg transition disabled:bg-gray-600 disabled:cursor-not-allowed" style={{width: 280}}>
 					{creating ? "Creating Lobby..." : "🎲 Create Lobby"}
 				</button>
 				<p className="text-gray-400 text-sm mt-2">Create a multiplayer lobby and invite friends</p>
@@ -209,48 +209,51 @@ export default function Home() {
 					Enter a lobby code shared by a friend
 				</p>
 			</div>
-			<h2 className="text-2xl font-bold mb-4">🌍 Public Lobbies</h2>
+			
+			<div className="mb-16">
+				<h2 className="text-2xl font-bold mb-4">Public Lobbies</h2>
 
-			<div className="space-y-3 max-w-4xl">
-				{lobbies
-					.filter((lobby) => getPlayerCount(lobby) > 0).length === 0 && (
-					<p className="text-gray-400">No lobbies available yet</p>
-				)}
+				<div className="space-y-3 max-w-4xl">
+					{lobbies
+						.filter((lobby) => getPlayerCount(lobby) > 0).length === 0 && (
+						<p className="text-gray-400">No lobbies available yet</p>
+					)}
 
-				{lobbies
-					.filter((lobby) => getPlayerCount(lobby) > 0)
-					.map((lobby) => {
-					const players = getPlayerCount(lobby);
-					const maxPlayers = getMaxPlayers(lobby);
+					{lobbies
+						.filter((lobby) => getPlayerCount(lobby) > 0)
+						.map((lobby) => {
+						const players = getPlayerCount(lobby);
+						const maxPlayers = getMaxPlayers(lobby);
 
-					return (
-						<div
-							key={lobby.code}
-							className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-4 bg-gray-800 rounded-lg border border-gray-700"
-						>
-							<div>
-								<div className="font-mono text-lg tracking-widest">
-									{lobby.code}
-								</div>
-								<div className="text-sm text-gray-400">
-									{lobby.game_type ?? "Not started yet"} •{" "}
-									{players} / {maxPlayers} players
-								</div>
-								<div className="text-xs text-gray-500">
-									Created {new Date(lobby.created_at).toLocaleString()}
-								</div>
-							</div>
-
-							<button
-								onClick={() => router.push(`/lobby/${lobby.code}`)}
-								className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition disabled:bg-gray-600"
-								disabled={players >= maxPlayers}
+						return (
+							<div
+								key={lobby.code}
+								className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-4 bg-gray-800 rounded-lg border border-gray-700"
 							>
-								{players >= maxPlayers ? "Full" : "Join"}
-							</button>
-						</div>
-					);
-				})}
+								<div>
+									<div className="font-mono text-lg tracking-widest">
+										{lobby.code}
+									</div>
+									<div className="text-sm text-gray-400">
+										{lobby.game_type ?? "Not started yet"} •{" "}
+										{players} / {maxPlayers} players
+									</div>
+									<div className="text-xs text-gray-500">
+										Created {new Date(lobby.created_at).toLocaleString()}
+									</div>
+								</div>
+
+								<button
+									onClick={() => router.push(`/lobby/${lobby.code}`)}
+									className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition disabled:bg-gray-600"
+									disabled={players >= maxPlayers}
+								>
+									{players >= maxPlayers ? "Full" : "Join"}
+								</button>
+							</div>
+						);
+					})}
+				</div>
 			</div>
 
 
