@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 import { RealtimeChannel } from "@supabase/supabase-js";
@@ -10,6 +10,7 @@ type Player = {
 	id: string;
 	name: string;
 	joinedAt: number;
+	lastSeen: number; // Added for heartbeat
 };
 
 type LobbyInfo = {
@@ -26,6 +27,7 @@ type Lobby = {
 	code: string;
 	game_type: string | null;
 	lobby_info: LobbyInfo;
+	last_activity: string;
 };
 
 export default function LobbyPage() {
@@ -40,15 +42,93 @@ export default function LobbyPage() {
 	const [gameType, setGameType] = useState<string>("");
 	const [channel, setChannel] = useState<RealtimeChannel | null>(null);
 
+	const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
+	const cleanupIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
 	const supabase = createClient();
 	const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 	const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
-	// Handle player cleanup on disconnect
+	// Heartbeat: Update player's lastSeen timestamp every 10 seconds
+	useEffect(() => {
+		if (!lobby || !currentPlayer) return;
+
+		const sendHeartbeat = async () => {
+			const now = Date.now();
+			const updatedPlayers = lobby.lobby_info.players.map(p => (p.id === currentPlayer.id ? { ...p, lastSeen: now } : p));
+
+			const updatedInfo = { ...lobby.lobby_info, players: updatedPlayers };
+
+			// This will also update last_activity via the trigger
+			await supabase.from("lobbies").update({ lobby_info: updatedInfo }).eq("id", lobby.id);
+		};
+
+		// Send initial heartbeat
+		sendHeartbeat();
+
+		// Send heartbeat every 10 seconds
+		heartbeatIntervalRef.current = setInterval(sendHeartbeat, 10000);
+
+		return () => {
+			if (heartbeatIntervalRef.current) {
+				clearInterval(heartbeatIntervalRef.current);
+			}
+		};
+	}, [lobby, currentPlayer]);
+
+	// Cleanup: Check for stale players every 15 seconds
+	useEffect(() => {
+		if (!lobby || !currentPlayer) return;
+
+		const checkStalePlayers = async () => {
+			const now = Date.now();
+			const staleThreshold = 30000; // 30 seconds
+
+			// Find players who haven't been seen in 30+ seconds
+			const activePlayers = lobby.lobby_info.players.filter(p => {
+				const timeSinceLastSeen = now - (p.lastSeen || p.joinedAt);
+				return timeSinceLastSeen < staleThreshold;
+			});
+
+			// If players were removed
+			if (activePlayers.length < lobby.lobby_info.players.length) {
+				console.log(`Removing ${lobby.lobby_info.players.length - activePlayers.length} stale player(s)`);
+
+				// If no players left, delete the lobby
+				if (activePlayers.length === 0) {
+					await supabase.from("lobbies").delete().eq("id", lobby.id);
+					router.push("/");
+					return;
+				}
+
+				// Update lobby with active players only
+				let updatedInfo = { ...lobby.lobby_info, players: activePlayers };
+
+				// If admin was removed, assign new admin
+				const adminStillActive = activePlayers.some(p => p.id === lobby.lobby_info.adminId);
+				if (!adminStillActive) {
+					updatedInfo.adminId = activePlayers[0].id;
+					console.log(`Admin was stale, new admin: ${activePlayers[0].name}`);
+				}
+
+				await supabase.from("lobbies").update({ lobby_info: updatedInfo }).eq("id", lobby.id);
+			}
+		};
+
+		// Check for stale players every 15 seconds
+		cleanupIntervalRef.current = setInterval(checkStalePlayers, 15000);
+
+		return () => {
+			if (cleanupIntervalRef.current) {
+				clearInterval(cleanupIntervalRef.current);
+			}
+		};
+	}, [lobby, currentPlayer]);
+
+	// Handle player cleanup on disconnect (Layer 3)
 	useEffect(() => {
 		const handleBeforeUnload = () => {
 			if (lobby && currentPlayer) {
-				// Use sendBeacon for reliable cleanup on page unload
 				const updatedPlayers = lobby.lobby_info.players.filter(p => p.id !== currentPlayer.id);
 
 				// If this was the last player, delete the lobby
@@ -127,10 +207,12 @@ export default function LobbyPage() {
 					return;
 				}
 
+				const now = Date.now();
 				const newPlayer: Player = {
 					id: playerId,
 					name: playerName,
-					joinedAt: Date.now(),
+					joinedAt: now,
+					lastSeen: now,
 				};
 
 				let updatedLobbyInfo: LobbyInfo;
@@ -153,14 +235,17 @@ export default function LobbyPage() {
 					const playerExists = existingPlayers.some(p => p.id === playerId);
 
 					if (!playerExists) {
-						// Add new player
+						// Add new player with lastSeen
 						updatedLobbyInfo = {
 							...lobbyData.lobby_info,
 							players: [...existingPlayers, newPlayer],
 						};
 					} else {
-						// Player already exists
-						updatedLobbyInfo = lobbyData.lobby_info;
+						// Player already exists - update their lastSeen
+						updatedLobbyInfo = {
+							...lobbyData.lobby_info,
+							players: existingPlayers.map(p => (p.id === playerId ? { ...p, lastSeen: now } : p)),
+						};
 					}
 				}
 
