@@ -161,9 +161,11 @@ export default function LobbyPage() {
 						setMessages(prev => [...prev, payload.new as Message].slice(-200));
 					}
 				)
-				.subscribe();
-
-			await sendSystemMessage(`${playerName} joined the lobby`);
+				.subscribe(status => {
+					if (status === "SUBSCRIBED") {
+						sendSystemMessage(`${playerName} joined the lobby`);
+					}
+				});
 		};
 
 		init();
