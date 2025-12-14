@@ -8,6 +8,18 @@ import { supabase } from "@/lib/supabase/client";
 export default function Home() {
 	const router = useRouter();
 	const [creating, setCreating] = useState(false);
+	const [joinCode, setJoinCode] = useState("");
+
+	function joinLobby() {
+		const code = joinCode.trim().toUpperCase();
+
+		if (!code) {
+			alert("Please enter a lobby code");
+			return;
+		}
+
+		router.push(`/lobby/${code}`);
+	}
 
 	async function createLobby() {
 		setCreating(true);
@@ -56,6 +68,37 @@ export default function Home() {
 				</button>
 				<p className="text-gray-400 text-sm mt-2">Create a multiplayer lobby and invite friends</p>
 			</div>
+			
+			{/* Join Lobby */}
+			<div className="mb-12">
+				<div className="flex flex-col sm:flex-row gap-4 items-start sm:items-end">
+					<div>
+						<label className="block text-sm font-semibold mb-1 text-gray-300">
+							Lobby Code
+						</label>
+						<input
+							type="text"
+							value={joinCode}
+							onChange={(e) => setJoinCode(e.target.value)}
+							maxLength={6}
+							placeholder="ABC123"
+							className="px-4 py-3 rounded-lg bg-gray-800 border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 uppercase tracking-widest"
+						/>
+					</div>
+
+					<button
+						onClick={joinLobby}
+						className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold text-lg transition"
+					>
+						🚪 Join Lobby
+					</button>
+				</div>
+
+				<p className="text-gray-400 text-sm mt-2">
+					Enter a lobby code shared by a friend
+				</p>
+			</div>
+
 
 			<h2 className="text-2xl font-bold mb-4">Quick Play Games</h2>
 			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-w-4xl">
