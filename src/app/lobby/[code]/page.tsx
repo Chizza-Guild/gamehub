@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 import { RealtimeChannel } from "@supabase/supabase-js";
+import "./styles.css";
 
 type Player = {
 	id: string;
@@ -43,6 +44,12 @@ export default function LobbyPage() {
 
 	// Initialize lobby
 	useEffect(() => {
+		if (!lobbyCode || lobbyCode.length < 4) {
+			setError("Invalid lobby code");
+			setLoading(false);
+			return;
+		}
+
 		async function initializeLobby() {
 			try {
 				// Get or create player ID
@@ -201,18 +208,18 @@ export default function LobbyPage() {
 
 	if (loading) {
 		return (
-			<div className="min-h-screen bg-gray-900 flex items-center justify-center">
-				<div className="text-white text-xl">Loading lobby...</div>
+			<div className="lobby-container">
+				<div className="loading-message">Loading lobby...</div>
 			</div>
 		);
 	}
 
 	if (error || !lobby) {
 		return (
-			<div className="min-h-screen bg-gray-900 flex items-center justify-center">
-				<div className="text-center">
-					<div className="text-red-500 text-xl mb-4">{error || "Lobby not found"}</div>
-					<button onClick={() => router.push("/")} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+			<div className="lobby-container">
+				<div className="error-container">
+					<div className="error-message">{error || "Lobby not found"}</div>
+					<button onClick={() => router.push("/")} className="button button-primary">
 						Back to Menu
 					</button>
 				</div>
@@ -221,26 +228,26 @@ export default function LobbyPage() {
 	}
 
 	return (
-		<div className="min-h-screen bg-gray-900 text-white p-8">
-			<div className="max-w-6xl mx-auto">
+		<div className="lobby-container">
+			<div className="lobby-content">
 				{/* Header */}
-				<div className="mb-8">
-					<h1 className="text-4xl font-bold mb-2">Lobby: {lobby.code}</h1>
-					<p className="text-gray-400">
+				<div className="lobby-header">
+					<h1 className="lobby-title">Lobby: {lobby.code}</h1>
+					<p className="player-count">
 						{lobby.lobby_info.players.length}/{lobby.lobby_info.settings.maxPlayers} players
 					</p>
 				</div>
 
-				<div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+				<div className="lobby-grid">
 					{/* Left: Player List */}
-					<div className="bg-gray-800 rounded-lg p-6">
-						<h2 className="text-2xl font-bold mb-4">Players</h2>
-						<div className="space-y-3">
+					<div className="card">
+						<h2 className="card-title">Players</h2>
+						<div className="player-list">
 							{lobby.lobby_info.players.map(player => (
-								<div key={player.id} className={`p-3 rounded ${player.id === currentPlayer?.id ? "bg-blue-600" : "bg-gray-700"}`}>
-									<div className="flex items-center justify-between">
-										<span className="font-medium">{player.name}</span>
-										{player.id === lobby.lobby_info.adminId && <span className="text-xs bg-yellow-600 px-2 py-1 rounded">ADMIN</span>}
+								<div key={player.id} className={`player-card ${player.id === currentPlayer?.id ? "player-card-current" : ""}`}>
+									<div className="player-info">
+										<span className="player-name">{player.name}</span>
+										{player.id === lobby.lobby_info.adminId && <span className="admin-badge">ADMIN</span>}
 									</div>
 								</div>
 							))}
@@ -248,15 +255,15 @@ export default function LobbyPage() {
 					</div>
 
 					{/* Right: Game Settings (Admin Only) */}
-					<div className="bg-gray-800 rounded-lg p-6">
-						<h2 className="text-2xl font-bold mb-4">Game Settings</h2>
+					<div className="card">
+						<h2 className="card-title">Game Settings</h2>
 
 						{isAdmin ? (
-							<div className="space-y-6">
+							<div className="settings-container">
 								{/* Game Type Selection */}
-								<div>
-									<label className="block text-sm font-medium mb-2">Game Type</label>
-									<select value={gameType} onChange={e => handleGameTypeChange(e.target.value)} className="w-full px-4 py-2 bg-gray-700 rounded border border-gray-600 focus:border-blue-500 focus:outline-none">
+								<div className="form-group">
+									<label className="form-label">Game Type</label>
+									<select value={gameType} onChange={e => handleGameTypeChange(e.target.value)} className="form-select">
 										<option value="">Select a game...</option>
 										<option value="trivia">Trivia</option>
 										<option value="drawing">Drawing Game</option>
@@ -266,26 +273,26 @@ export default function LobbyPage() {
 								</div>
 
 								{/* Max Players */}
-								<div>
-									<label className="block text-sm font-medium mb-2">Max Players: {lobby.lobby_info.settings.maxPlayers}</label>
-									<input type="range" min="2" max="16" value={lobby.lobby_info.settings.maxPlayers} onChange={e => handleMaxPlayersChange(parseInt(e.target.value))} className="w-full" />
+								<div className="form-group">
+									<label className="form-label">Max Players: {lobby.lobby_info.settings.maxPlayers}</label>
+									<input type="range" min="2" max="16" value={lobby.lobby_info.settings.maxPlayers} onChange={e => handleMaxPlayersChange(parseInt(e.target.value))} className="form-range" />
 								</div>
 
 								{/* Start Game Button */}
-								<button disabled={!gameType || lobby.lobby_info.players.length < 2} className="w-full px-6 py-3 bg-green-600 text-white rounded font-bold hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed">
+								<button disabled={!gameType || lobby.lobby_info.players.length < 2} className="button button-success button-full">
 									Start Game
 								</button>
 
-								{!gameType && <p className="text-sm text-gray-400 text-center">Select a game type to continue</p>}
-								{gameType && lobby.lobby_info.players.length < 2 && <p className="text-sm text-gray-400 text-center">Need at least 2 players to start</p>}
+								{!gameType && <p className="help-text">Select a game type to continue</p>}
+								{gameType && lobby.lobby_info.players.length < 2 && <p className="help-text">Need at least 2 players to start</p>}
 							</div>
 						) : (
-							<div className="text-center py-8">
-								<p className="text-gray-400 mb-4">Waiting for the admin to configure the game...</p>
+							<div className="waiting-container">
+								<p className="waiting-message">Waiting for the admin to configure the game...</p>
 								{gameType && (
-									<div className="mt-4">
-										<p className="text-sm text-gray-400">Selected Game:</p>
-										<p className="text-xl font-bold text-blue-400 capitalize">{gameType.replace("_", " ")}</p>
+									<div className="selected-game">
+										<p className="selected-game-label">Selected Game:</p>
+										<p className="selected-game-name">{gameType.replace("_", " ")}</p>
 									</div>
 								)}
 							</div>
@@ -294,8 +301,8 @@ export default function LobbyPage() {
 				</div>
 
 				{/* Leave Lobby Button */}
-				<div className="mt-8 text-center">
-					<button onClick={handleLeaveLobby} className="px-6 py-2 bg-red-600 text-white rounded hover:bg-red-700">
+				<div className="lobby-footer">
+					<button onClick={handleLeaveLobby} className="button button-danger">
 						Leave Lobby
 					</button>
 				</div>
