@@ -7,28 +7,51 @@ type Lobby = Tables<'lobbies'>;
 
 // Define the structure of lobby_info JSONB
 interface LobbyInfo {
-  status: 'lobby' | 'countdown' | 'playing' | 'finished';
-  host_id: string;
-  max_players: number;
-  started_at?: string | null;
-  finished_at?: string | null;
   players: {
-    player_id: string;
-    player_name: string;
-    is_ready: boolean;
-    score: number;
-    accuracy: number;
-    combo: number;
-    max_combo: number;
-    perfect_count: number;
-    great_count: number;
-    good_count: number;
-    miss_count: number;
-    joined_at: string;
+    id: string;
+    name: string;
+    joinedAt: number;
+    lastSeen: number;
   }[];
+  adminId: string;
+  settings: {
+    maxPlayers: number;
+    isPrivate: boolean;
+    mutedPlayers: string[];
+  };
+  game_state?: {
+    dance?: {
+      status: 'lobby' | 'countdown' | 'playing' | 'finished';
+      started_at?: string | null;
+      finished_at?: string | null;
+      player_scores: {
+        player_id: string;
+        is_ready: boolean;
+        score: number;
+        accuracy: number;
+        combo: number;
+        max_combo: number;
+        perfect_count: number;
+        great_count: number;
+        good_count: number;
+        miss_count: number;
+      }[];
+    };
+  };
 }
 
-export type GamePlayer = LobbyInfo['players'][0];
+export type GamePlayer = {
+  player_id: string;
+  is_ready: boolean;
+  score: number;
+  accuracy: number;
+  combo: number;
+  max_combo: number;
+  perfect_count: number;
+  great_count: number;
+  good_count: number;
+  miss_count: number;
+};
 
 export function useGameSession(lobbyCode: string | null) {
   const [session, setSession] = useState<(Lobby & { lobby_info: LobbyInfo }) | null>(null);
@@ -60,7 +83,9 @@ export function useGameSession(lobbyCode: string | null) {
         if (mounted) {
           const typedLobby = lobbyData as Lobby & { lobby_info: LobbyInfo };
           setSession(typedLobby);
-          setPlayers(typedLobby.lobby_info?.players || []);
+          // Extract players from game_state instead of lobby_info.players
+          const gameState = typedLobby.lobby_info?.game_state?.dance;
+          setPlayers(gameState?.player_scores || []);
           setLoading(false);
         }
       } catch (err) {
@@ -91,7 +116,9 @@ export function useGameSession(lobbyCode: string | null) {
           if (payload.new) {
             const typedLobby = payload.new as Lobby & { lobby_info: LobbyInfo };
             setSession(typedLobby);
-            setPlayers(typedLobby.lobby_info?.players || []);
+            // Extract players from game_state
+            const gameState = typedLobby.lobby_info?.game_state?.dance;
+            setPlayers(gameState?.player_scores || []);
           }
         }
       )
@@ -109,20 +136,23 @@ export function useGameSession(lobbyCode: string | null) {
     if (!lobbyCode || !session) return;
 
     const playerId = getPlayerId();
-    const playerName = getPlayerName();
 
     try {
       const currentInfo = session.lobby_info as LobbyInfo;
-      const existingPlayer = currentInfo.players.find(p => p.player_id === playerId);
+      const gameState = currentInfo.game_state?.dance || {
+        status: 'lobby' as const,
+        player_scores: [],
+      };
+
+      const existingPlayer = gameState.player_scores.find(p => p.player_id === playerId);
 
       if (existingPlayer) {
-        console.log('Player already in lobby');
+        console.log('Player already in game');
         return;
       }
 
       const newPlayer: GamePlayer = {
         player_id: playerId,
-        player_name: playerName,
         is_ready: false,
         score: 0,
         accuracy: 0,
@@ -132,12 +162,17 @@ export function useGameSession(lobbyCode: string | null) {
         great_count: 0,
         good_count: 0,
         miss_count: 0,
-        joined_at: new Date().toISOString(),
       };
 
       const updatedInfo: LobbyInfo = {
         ...currentInfo,
-        players: [...currentInfo.players, newPlayer],
+        game_state: {
+          ...currentInfo.game_state,
+          dance: {
+            ...gameState,
+            player_scores: [...gameState.player_scores, newPlayer],
+          },
+        },
       };
 
       const { error } = await supabase
@@ -148,7 +183,7 @@ export function useGameSession(lobbyCode: string | null) {
 
       if (error) throw error;
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to join lobby');
+      setError(err instanceof Error ? err.message : 'Failed to join game');
     }
   };
 
@@ -159,13 +194,25 @@ export function useGameSession(lobbyCode: string | null) {
 
     try {
       const currentInfo = session.lobby_info as LobbyInfo;
-      const updatedPlayers = currentInfo.players.map(p =>
+      const gameState = currentInfo.game_state?.dance;
+
+      if (!gameState) {
+        throw new Error('Game state not initialized');
+      }
+
+      const updatedPlayers = gameState.player_scores.map(p =>
         p.player_id === playerId ? { ...p, is_ready: ready } : p
       );
 
       const updatedInfo: LobbyInfo = {
         ...currentInfo,
-        players: updatedPlayers,
+        game_state: {
+          ...currentInfo.game_state,
+          dance: {
+            ...gameState,
+            player_scores: updatedPlayers,
+          },
+        },
       };
 
       const { error } = await supabase
@@ -197,7 +244,13 @@ export function useGameSession(lobbyCode: string | null) {
 
     try {
       const currentInfo = session.lobby_info as LobbyInfo;
-      const updatedPlayers = currentInfo.players.map(p =>
+      const gameState = currentInfo.game_state?.dance;
+
+      if (!gameState) {
+        throw new Error('Game state not initialized');
+      }
+
+      const updatedPlayers = gameState.player_scores.map(p =>
         p.player_id === playerId
           ? {
               ...p,
@@ -215,7 +268,13 @@ export function useGameSession(lobbyCode: string | null) {
 
       const updatedInfo: LobbyInfo = {
         ...currentInfo,
-        players: updatedPlayers,
+        game_state: {
+          ...currentInfo.game_state,
+          dance: {
+            ...gameState,
+            player_scores: updatedPlayers,
+          },
+        },
       };
 
       const { error, data } = await supabase

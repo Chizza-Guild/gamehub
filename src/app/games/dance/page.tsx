@@ -51,14 +51,21 @@ function DodoReMiGameContent() {
   const localPlayerId = getPlayerId();
   const localPlayerName = getPlayerName();
 
+  // Helper function to get player name from lobby players list
+  const getPlayerNameById = (playerId: string): string => {
+    const lobbyPlayer = session?.lobby_info?.players?.find(p => p.id === playerId);
+    return lobbyPlayer?.name || 'Unknown Player';
+  };
+
   // Initialize game
   useEffect(() => {
-    // Create or join lobby
     if (!lobbyCode) {
-      createNewLobby();
-    } else {
-      joinSession();
+      console.error('No lobby code provided');
+      return;
     }
+
+    // Join existing lobby
+    joinSession();
 
     // Load chart
     const testChart = generateTestChart();
@@ -86,13 +93,14 @@ function DodoReMiGameContent() {
 
       // Add/update all players
       players.forEach((player) => {
-        console.log('Processing player:', player.player_name, 'Score:', player.score);
+        const playerName = getPlayerNameById(player.player_id);
+        console.log('Processing player:', playerName, 'Score:', player.score);
 
         // If player doesn't exist in scores, create initial score
         if (!newScores.has(player.player_id)) {
           newScores.set(player.player_id, {
             playerId: player.player_id,
-            playerName: player.player_name,
+            playerName: playerName,
             score: player.score || 0,
             accuracy: player.accuracy || 0,
             combo: player.combo || 0,
@@ -190,6 +198,39 @@ function DodoReMiGameContent() {
     };
   }, [lobbyCode, initialized, initialize]);
 
+  // Watch for game state changes (for game start from lobby)
+  useEffect(() => {
+    if (!lobbyCode) return;
+
+    const lobbyChannel = supabase
+      .channel(`dance-game:${lobbyCode}`)
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'lobbies',
+        filter: `code=eq.${lobbyCode}`,
+      }, (payload: any) => {
+        const gameState = payload.new?.lobby_info?.game_state?.dance;
+        if (gameState?.status === 'countdown' && gamePhase === 'lobby') {
+          const startTime = gameState.started_at
+            ? new Date(gameState.started_at).getTime() + GAME_CONFIG.COUNTDOWN_DURATION
+            : Date.now() + GAME_CONFIG.COUNTDOWN_DURATION;
+
+          setGamePhase('countdown');
+          setCountdownStartTime(startTime);
+
+          if (!initialized) {
+            initialize();
+          }
+        }
+      })
+      .subscribe();
+
+    return () => {
+      lobbyChannel.unsubscribe();
+    };
+  }, [lobbyCode, gamePhase, initialized, initialize]);
+
   // Game loop
   useEffect(() => {
     if (gamePhase !== 'playing') return;
@@ -238,36 +279,6 @@ function DodoReMiGameContent() {
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
   }, [gamePhase, currentTime, chart]);
-
-  async function createNewLobby() {
-    // Generate a random 6-character lobby code
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-
-    const insertData = {
-      game_type: 'dance',
-      code,
-      lobby_info: {
-        status: 'lobby',
-        host_id: localPlayerId,
-        max_players: GAME_CONFIG.MAX_PLAYERS,
-        players: [],
-      },
-    };
-
-    const { data, error } = await supabase
-      .from('lobbies')
-      // @ts-expect-error - Supabase type inference issue with Database generic
-      .insert(insertData)
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Failed to create lobby:', error);
-      return;
-    }
-
-    router.push(`/games/dance?code=${code}`);
-  }
 
   function handleCountdownComplete() {
     console.log('Countdown complete! Starting game...');
@@ -389,52 +400,6 @@ function DodoReMiGameContent() {
     }
   }
 
-  async function handleStartGame() {
-    if (!lobbyCode || !session) return;
-
-    console.log('Host starting game...');
-
-    // Synchronize clocks
-    await syncManagerRef.current.synchronize(async () => {
-      return Date.now(); // In production, get from server
-    });
-
-    // Calculate start time (3 seconds from now in synced time)
-    const syncedStartTime =
-      syncManagerRef.current.now() + GAME_CONFIG.COUNTDOWN_DURATION;
-
-    console.log('Broadcasting game start with time:', syncedStartTime);
-
-    // Broadcast start event
-    realtimeRef.current?.broadcast('game-start', {
-      startTime: syncedStartTime,
-    });
-
-    // Update lobby status (this triggers other players via database subscription)
-    const currentInfo = session.lobby_info as any;
-    const updatedInfo = {
-      ...currentInfo,
-      status: 'countdown',
-      started_at: new Date().toISOString(),
-    };
-
-    await supabase
-      .from('lobbies')
-      // @ts-expect-error - Supabase type inference issue with Database generic
-      .update({ lobby_info: updatedInfo })
-      .eq('id', session.id);
-
-    console.log('Lobby status updated to countdown');
-
-    // Start locally for the host
-    setGamePhase('countdown');
-    setCountdownStartTime(syncedStartTime);
-
-    if (!initialized) {
-      await initialize();
-    }
-  }
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
@@ -445,63 +410,15 @@ function DodoReMiGameContent() {
 
   if (gamePhase === 'lobby') {
     return (
-      <div className="container mx-auto p-8 min-h-screen bg-gray-900 text-white">
-        <h1 className="text-4xl font-bold mb-8">Dodo Re Mi - Lobby</h1>
-
-        <div className="grid grid-cols-2 gap-8">
-          <div>
-            <h2 className="text-2xl mb-4">
-              Players ({players.length}/{GAME_CONFIG.MAX_PLAYERS})
-            </h2>
-            <div className="space-y-2">
-              {players.map((player) => (
-                <div
-                  key={player.player_id}
-                  className="p-3 bg-gray-800 rounded flex justify-between items-center"
-                >
-                  <span>{player.player_name}</span>
-                  <span
-                    className={
-                      player.is_ready ? 'text-green-400' : 'text-gray-400'
-                    }
-                  >
-                    {player.is_ready ? '✓ Ready' : 'Not Ready'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <h2 className="text-2xl mb-4">Song: {chart?.name}</h2>
-            <div className="space-y-4">
-              <div className="p-4 bg-gray-800 rounded">
-                <p className="text-gray-400 mb-2">Controls:</p>
-                <p>Arrow Keys or WASD to hit notes</p>
-                <p>Hit notes when they reach the target zone!</p>
-              </div>
-
-              <button
-                onClick={() => setReady(true)}
-                className="w-full px-6 py-3 bg-green-600 hover:bg-green-700 rounded-lg font-bold transition"
-              >
-                Ready
-              </button>
-
-              {(session?.lobby_info as any)?.host_id === localPlayerId && (
-                <button
-                  onClick={handleStartGame}
-                  disabled={
-                    players.filter((p) => p.is_ready).length <
-                    GAME_CONFIG.MIN_PLAYERS
-                  }
-                  className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold disabled:opacity-50 disabled:cursor-not-allowed transition"
-                >
-                  Start Game
-                </button>
-              )}
-            </div>
-          </div>
+      <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
+        <div className="text-center">
+          <p className="text-xl mb-4">Waiting for host to start game...</p>
+          <button
+            onClick={() => router.push(`/lobby/${lobbyCode}`)}
+            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold"
+          >
+            Return to Lobby
+          </button>
         </div>
       </div>
     );
@@ -602,13 +519,10 @@ function DodoReMiGameContent() {
 
         <div className="text-center mt-8">
           <button
-            onClick={() => {
-              // Full page reload to create new session
-              window.location.href = '/games/dance';
-            }}
+            onClick={() => router.push(`/lobby/${lobbyCode}`)}
             className="px-8 py-4 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold text-xl transition"
           >
-            Play Again
+            Return to Lobby
           </button>
         </div>
       </div>

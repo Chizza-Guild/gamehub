@@ -450,6 +450,53 @@ export default function LobbyPage() {
 		}
 	};
 
+	const handleStartGame = async () => {
+		if (!isAdmin || !lobby || !gameType) return;
+
+		if (gameType === "dance") {
+			// Initialize game state for dance game
+			const updatedInfo = {
+				...lobby.lobby_info,
+				game_state: {
+					dance: {
+						status: 'lobby' as const,
+						player_scores: lobby.lobby_info.players.map(p => ({
+							player_id: p.id,
+							is_ready: false,
+							score: 0,
+							accuracy: 0,
+							combo: 0,
+							max_combo: 0,
+							perfect_count: 0,
+							great_count: 0,
+							good_count: 0,
+							miss_count: 0,
+						})),
+					},
+				},
+			};
+
+			const { error } = await supabase
+				.from("lobbies")
+				.update({ lobby_info: updatedInfo })
+				.eq("id", lobby.id);
+
+			if (error) {
+				console.error("Failed to initialize game state:", error);
+				return;
+			}
+
+			// Send system message
+			await sendSystemMessage("Game starting!");
+
+			// Navigate to dance game
+			router.push(`/games/dance?code=${lobby.code}`);
+		} else {
+			// Other games not yet implemented
+			await sendSystemMessage(`${gameType} game is not yet implemented`);
+		}
+	};
+
 	const handleToggleMute = async (playerId: string, playerName: string) => {
 		if (!isAdmin || !lobby) return;
 
@@ -626,6 +673,7 @@ export default function LobbyPage() {
 									<label className="form-label">Game Type</label>
 									<select value={gameType} onChange={e => handleGameTypeChange(e.target.value)} className="form-select">
 										<option value="">Select a game...</option>
+										<option value="dance">Dance (Dodo Re Mi)</option>
 										<option value="trivia">Trivia</option>
 										<option value="drawing">Drawing Game</option>
 										<option value="word_game">Word Game</option>
@@ -638,7 +686,7 @@ export default function LobbyPage() {
 									<input type="range" min="2" max="16" value={lobby.lobby_info.settings.maxPlayers} onChange={e => handleMaxPlayersChange(parseInt(e.target.value))} className="form-range" />
 								</div>
 
-								<button disabled={!gameType || lobby.lobby_info.players.length < 2} className="button button-success button-full">
+								<button onClick={handleStartGame} disabled={!gameType || lobby.lobby_info.players.length < 2} className="button button-success button-full">
 									Start Game
 								</button>
 

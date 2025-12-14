@@ -35,11 +35,24 @@ export type Updates<T extends keyof Database['public']['Tables']> =
 export function getPlayerId(): string {
   if (typeof window === 'undefined') return '';
 
-  let playerId = localStorage.getItem('player_id');
+  // Check new format first
+  let playerId = localStorage.getItem('playerId');
+
+  // Migrate from old format
   if (!playerId) {
-    playerId = `player_${Math.random().toString(36).substr(2, 9)}`;
-    localStorage.setItem('player_id', playerId);
+    playerId = localStorage.getItem('player_id');
+    if (playerId) {
+      localStorage.setItem('playerId', playerId);
+      localStorage.removeItem('player_id');
+    }
   }
+
+  // Generate new if neither exists
+  if (!playerId) {
+    playerId = crypto.randomUUID();
+    localStorage.setItem('playerId', playerId);
+  }
+
   return playerId;
 }
 
@@ -49,11 +62,24 @@ export function getPlayerId(): string {
 export function getPlayerName(): string {
   if (typeof window === 'undefined') return 'Guest';
 
-  let playerName = localStorage.getItem('player_name');
+  // Check new format first
+  let playerName = localStorage.getItem('playerName');
+
+  // Migrate from old format
+  if (!playerName) {
+    playerName = localStorage.getItem('player_name');
+    if (playerName) {
+      localStorage.setItem('playerName', playerName);
+      localStorage.removeItem('player_name');
+    }
+  }
+
+  // Generate new if neither exists
   if (!playerName) {
     playerName = `Guest${Math.floor(Math.random() * 1000)}`;
-    localStorage.setItem('player_name', playerName);
+    localStorage.setItem('playerName', playerName);
   }
+
   return playerName;
 }
 
@@ -62,6 +88,6 @@ export function getPlayerName(): string {
  */
 export function setPlayerName(name: string): void {
   if (typeof window !== 'undefined') {
-    localStorage.setItem('player_name', name);
+    localStorage.setItem('playerName', name);
   }
 }
