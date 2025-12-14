@@ -11,19 +11,19 @@ type Player = {
 	name: string;
 	joined_at: string;
 	last_seen: string;
+	is_admin: boolean;
+	is_muted: boolean;
 };
 
 type LobbySettings = {
 	maxPlayers: number;
 	isPrivate: boolean;
-	mutedPlayers: string[];
 };
 
 type Lobby = {
 	id: number;
 	code: string;
 	game_type: string | null;
-	admin_id: string;
 	settings: LobbySettings;
 };
 
@@ -114,13 +114,15 @@ export default function LobbyPage() {
 				last_seen: new Date().toISOString(),
 			});
 
+			const { data: existingAdmin } = await supabase.from("lobby_players").select("player_id").eq("lobby_id", lobbyData.id).eq("is_admin", true).maybeSingle();
+
+			if (!existingAdmin) {
+				await supabase.from("lobby_players").update({ is_admin: true }).eq("lobby_id", lobbyData.id).eq("player_id", playerId);
+			}
+
 			const { data: playersData } = await supabase.from("lobby_players").select("*").eq("lobby_id", lobbyData.id).order("joined_at");
 
 			setPlayers(playersData || []);
-
-			if (!lobbyData.admin_id) {
-				await supabase.from("lobbies").update({ admin_id: playerId }).eq("id", lobbyData.id);
-			}
 
 			await sendSystemMessage(`${playerName} joined the lobby`);
 
@@ -131,18 +133,36 @@ export default function LobbyPage() {
 
 			lobbyChannel.current = supabase
 				.channel(`lobby:${lobbyData.id}`)
-				.on("postgres_changes", { event: "*", schema: "public", table: "lobby_players", filter: `lobby_id=eq.${lobbyData.id}` }, async () => {
-					const { data } = await supabase.from("lobby_players").select("*").eq("lobby_id", lobbyData.id).order("joined_at");
+				.on(
+					"postgres_changes",
+					{
+						event: "*",
+						schema: "public",
+						table: "lobby_players",
+						filter: `lobby_id=eq.${lobbyData.id}`,
+					},
+					async () => {
+						const { data } = await supabase.from("lobby_players").select("*").eq("lobby_id", lobbyData.id).order("joined_at");
 
-					setPlayers(data || []);
-				})
+						setPlayers(data || []);
+					}
+				)
 				.subscribe();
 
 			messagesChannel.current = supabase
 				.channel(`messages:${lobbyData.id}`)
-				.on("postgres_changes", { event: "INSERT", schema: "public", table: "lobby_messages", filter: `lobby_id=eq.${lobbyData.id}` }, payload => {
-					setMessages(prev => [...prev, payload.new as Message].slice(-200));
-				})
+				.on(
+					"postgres_changes",
+					{
+						event: "INSERT",
+						schema: "public",
+						table: "lobby_messages",
+						filter: `lobby_id=eq.${lobbyData.id}`,
+					},
+					payload => {
+						setMessages(prev => [...prev, payload.new as Message].slice(-200));
+					}
+				)
 				.subscribe();
 		};
 
@@ -180,8 +200,8 @@ export default function LobbyPage() {
 				return;
 			}
 
-			if (!remaining.some(p => p.player_id === lobby.admin_id)) {
-				await supabase.from("lobbies").update({ admin_id: remaining[0].player_id }).eq("id", lobby.id);
+			if (!remaining.some(p => p.is_admin)) {
+				await supabase.from("lobby_players").update({ is_admin: true }).eq("lobby_id", lobby.id).eq("player_id", remaining[0].player_id);
 
 				await sendSystemMessage(`${remaining[0].name} is now the admin`);
 			}
@@ -193,8 +213,9 @@ export default function LobbyPage() {
 		};
 	}, [lobby, currentPlayerId]);
 
-	const isAdmin = currentPlayerId === lobby?.admin_id;
-	const isMuted = lobby?.settings.mutedPlayers.includes(currentPlayerId || "") || false;
+	const currentPlayer = players.find(p => p.player_id === currentPlayerId);
+	const isAdmin = currentPlayer?.is_admin || false;
+	const isMuted = currentPlayer?.is_muted || false;
 
 	const handleSendMessage = async (e: React.FormEvent) => {
 		e.preventDefault();
@@ -214,17 +235,12 @@ export default function LobbyPage() {
 	const handleToggleMute = async (playerId: string, name: string) => {
 		if (!lobby || !isAdmin) return;
 
-		const muted = lobby.settings.mutedPlayers.includes(playerId);
-		const updated = muted ? lobby.settings.mutedPlayers.filter(id => id !== playerId) : [...lobby.settings.mutedPlayers, playerId];
+		const target = players.find(p => p.player_id === playerId);
+		if (!target) return;
 
-		await supabase
-			.from("lobbies")
-			.update({ settings: { ...lobby.settings, mutedPlayers: updated } })
-			.eq("id", lobby.id);
+		await supabase.from("lobby_players").update({ is_muted: !target.is_muted }).eq("lobby_id", lobby.id).eq("player_id", playerId);
 
-		setLobby({ ...lobby, settings: { ...lobby.settings, mutedPlayers: updated } });
-
-		await sendSystemMessage(`${name} ${muted ? "unmuted" : "muted"}`);
+		await sendSystemMessage(`${name} ${target.is_muted ? "unmuted" : "muted"}`);
 	};
 
 	const handleLeaveLobby = async () => {
@@ -252,6 +268,7 @@ export default function LobbyPage() {
 				<div className="lobby-grid-with-chat">
 					<div className="card chat-card">
 						<h2 className="card-title">Chat</h2>
+
 						<div className="chat-messages">
 							{messages.map(msg => (
 								<div key={msg.id} className={`chat-message ${msg.is_system ? "chat-message-system" : ""}`}>
@@ -286,22 +303,22 @@ export default function LobbyPage() {
 
 					<div className="card">
 						<h2 className="card-title">Players</h2>
+
 						<div className="player-list">
 							{players.map(player => {
-								const playerMuted = lobby.settings.mutedPlayers.includes(player.player_id);
 								const isCurrent = player.player_id === currentPlayerId;
 
 								return (
 									<div key={player.player_id} className={`player-card ${isCurrent ? "player-card-current" : ""}`}>
 										<div className="player-info">
 											<span className="player-name">{player.name}</span>
-											{player.player_id === lobby.admin_id && <span className="admin-badge">ADMIN</span>}
-											{playerMuted && <span className="muted-badge">MUTED</span>}
+											{player.is_admin && <span className="admin-badge">ADMIN</span>}
+											{player.is_muted && <span className="muted-badge">MUTED</span>}
 										</div>
 
 										{isAdmin && !isCurrent && (
 											<button onClick={() => handleToggleMute(player.player_id, player.name)} className="mute-button">
-												{playerMuted ? "Unmute" : "Mute"}
+												{player.is_muted ? "Unmute" : "Mute"}
 											</button>
 										)}
 									</div>
@@ -334,9 +351,6 @@ export default function LobbyPage() {
 								<button disabled={!gameType || players.length < 2} className="button button-success button-full">
 									Start Game
 								</button>
-
-								{!gameType && <p className="help-text">Select a game type</p>}
-								{gameType && players.length < 2 && <p className="help-text">Need at least 2 players</p>}
 							</div>
 						) : (
 							<div className="waiting-container">
