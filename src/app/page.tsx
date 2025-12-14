@@ -22,7 +22,7 @@ export default function Home() {
 	};
 	
 	useEffect(() => {
-		const existing = localStorage.getItem("player_name");
+		const existing = localStorage.getItem("playerName");
 		if (existing) setUsername(existing);
 	}, []);
 
@@ -145,7 +145,7 @@ export default function Home() {
 									const trimmed = username.trim();
 									if (trimmed.length < 3) return;
 
-									localStorage.setItem("player_name", trimmed);
+									localStorage.setItem("playerName", trimmed);
 									setUsername(trimmed);
 									setSaved(true);
 									setEditingName(false);
