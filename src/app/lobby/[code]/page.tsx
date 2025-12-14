@@ -10,7 +10,7 @@ type Player = {
 	id: string;
 	name: string;
 	joinedAt: number;
-	lastSeen: number; // Added for heartbeat
+	lastSeen: number;
 };
 
 type LobbyInfo = {
@@ -19,6 +19,7 @@ type LobbyInfo = {
 	settings: {
 		maxPlayers: number;
 		isPrivate: boolean;
+		mutedPlayers: string[];
 	};
 };
 
@@ -28,6 +29,16 @@ type Lobby = {
 	game_type: string | null;
 	lobby_info: LobbyInfo;
 	last_activity: string;
+};
+
+type Message = {
+	id: string;
+	lobby_id: string;
+	player_id: string | null;
+	player_name: string | null;
+	message: string;
+	is_system: boolean;
+	created_at: string;
 };
 
 export default function LobbyPage() {
@@ -41,13 +52,39 @@ export default function LobbyPage() {
 	const [error, setError] = useState<string | null>(null);
 	const [gameType, setGameType] = useState<string>("");
 	const [channel, setChannel] = useState<RealtimeChannel | null>(null);
+	const [messagesChannel, setMessagesChannel] = useState<RealtimeChannel | null>(null);
+	const [messages, setMessages] = useState<Message[]>([]);
+	const [messageInput, setMessageInput] = useState("");
 
 	const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
 	const cleanupIntervalRef = useRef<NodeJS.Timeout | null>(null);
+	const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
 	const supabase = createClient();
 	const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 	const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+
+	// Auto-scroll to bottom of messages
+	const scrollToBottom = () => {
+		messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+	};
+
+	useEffect(() => {
+		scrollToBottom();
+	}, [messages]);
+
+	// Send system message
+	const sendSystemMessage = async (message: string) => {
+		if (!lobby) return;
+
+		await supabase.from("lobby_messages").insert({
+			lobby_id: lobby.id,
+			player_id: null,
+			player_name: null,
+			message,
+			is_system: true,
+		});
+	};
 
 	// Heartbeat: Update player's lastSeen timestamp every 10 seconds
 	useEffect(() => {
@@ -59,14 +96,10 @@ export default function LobbyPage() {
 
 			const updatedInfo = { ...lobby.lobby_info, players: updatedPlayers };
 
-			// This will also update last_activity via the trigger
 			await supabase.from("lobbies").update({ lobby_info: updatedInfo }).eq("id", lobby.id);
 		};
 
-		// Send initial heartbeat
 		sendHeartbeat();
-
-		// Send heartbeat every 10 seconds
 		heartbeatIntervalRef.current = setInterval(sendHeartbeat, 10000);
 
 		return () => {
@@ -81,7 +114,6 @@ export default function LobbyPage() {
 		if (!lobby || !currentPlayer) return;
 
 		const checkStalePlayers = async () => {
-			// Fetch the latest lobby data to get current player states
 			const { data: freshLobby, error: fetchError } = await supabase.from("lobbies").select("*").eq("id", lobby.id).single();
 
 			if (fetchError || !freshLobby) {
@@ -90,9 +122,8 @@ export default function LobbyPage() {
 			}
 
 			const now = Date.now();
-			const staleThreshold = 30000; // 30 seconds
+			const staleThreshold = 30000;
 
-			// Find players who haven't been seen in 30+ seconds
 			const activePlayers = freshLobby.lobby_info.players.filter((p: Player) => {
 				const timeSinceLastSeen = now - (p.lastSeen || p.joinedAt);
 				const isStale = timeSinceLastSeen >= staleThreshold;
@@ -102,11 +133,15 @@ export default function LobbyPage() {
 				return !isStale;
 			});
 
-			// If players were removed
 			if (activePlayers.length < freshLobby.lobby_info.players.length) {
 				console.log(`Removing ${freshLobby.lobby_info.players.length - activePlayers.length} stale player(s)`);
 
-				// If no players left, delete the lobby
+				// Send system messages for removed players
+				const removedPlayers = freshLobby.lobby_info.players.filter((p: Player) => !activePlayers.some((ap: Player) => ap.id === p.id));
+				for (const player of removedPlayers) {
+					await sendSystemMessage(`${player.name} left the lobby (disconnected)`);
+				}
+
 				if (activePlayers.length === 0) {
 					console.log("No active players left, deleting lobby");
 					await supabase.from("lobbies").delete().eq("id", lobby.id);
@@ -114,14 +149,13 @@ export default function LobbyPage() {
 					return;
 				}
 
-				// Update lobby with active players only
 				let updatedInfo = { ...freshLobby.lobby_info, players: activePlayers };
 
-				// If admin was removed, assign new admin
 				const adminStillActive = activePlayers.some((p: Player) => p.id === freshLobby.lobby_info.adminId);
 				if (!adminStillActive) {
 					updatedInfo.adminId = activePlayers[0].id;
 					console.log(`Admin was stale, new admin: ${activePlayers[0].name}`);
+					await sendSystemMessage(`${activePlayers[0].name} is now the admin`);
 				}
 
 				const { error: updateError } = await supabase.from("lobbies").update({ lobby_info: updatedInfo }).eq("id", lobby.id);
@@ -134,10 +168,7 @@ export default function LobbyPage() {
 			}
 		};
 
-		// Run initial check after 15 seconds
 		const initialTimeout = setTimeout(checkStalePlayers, 15000);
-
-		// Check for stale players every 15 seconds
 		cleanupIntervalRef.current = setInterval(checkStalePlayers, 15000);
 
 		return () => {
@@ -148,13 +179,12 @@ export default function LobbyPage() {
 		};
 	}, [lobby?.id, currentPlayer?.id]);
 
-	// Handle player cleanup on disconnect (Layer 3)
+	// Handle player cleanup on disconnect
 	useEffect(() => {
 		const handleBeforeUnload = () => {
 			if (lobby && currentPlayer) {
 				const updatedPlayers = lobby.lobby_info.players.filter(p => p.id !== currentPlayer.id);
 
-				// If this was the last player, delete the lobby
 				if (updatedPlayers.length === 0) {
 					fetch(`${supabaseUrl}/rest/v1/lobbies?id=eq.${lobby.id}`, {
 						method: "DELETE",
@@ -166,15 +196,12 @@ export default function LobbyPage() {
 						keepalive: true,
 					});
 				} else {
-					// Otherwise update the lobby
 					let updatedInfo = { ...lobby.lobby_info, players: updatedPlayers };
 
-					// If admin leaves and there are other players, assign new admin
 					if (currentPlayer.id === lobby.lobby_info.adminId) {
 						updatedInfo.adminId = updatedPlayers[0].id;
 					}
 
-					// Use fetch with keepalive for more reliable delivery
 					fetch(`${supabaseUrl}/rest/v1/lobbies?id=eq.${lobby.id}`, {
 						method: "PATCH",
 						headers: {
@@ -207,7 +234,6 @@ export default function LobbyPage() {
 
 		async function initializeLobby() {
 			try {
-				// Get or create player ID
 				let playerId = localStorage.getItem("playerId");
 				let playerName = localStorage.getItem("playerName");
 
@@ -221,7 +247,6 @@ export default function LobbyPage() {
 					localStorage.setItem("playerName", playerName);
 				}
 
-				// Fetch lobby
 				const { data: lobbyData, error: fetchError } = await supabase.from("lobbies").select("*").eq("code", lobbyCode).single();
 
 				if (fetchError || !lobbyData) {
@@ -239,40 +264,47 @@ export default function LobbyPage() {
 				};
 
 				let updatedLobbyInfo: LobbyInfo;
+				let isNewPlayer = false;
 
-				// Check if this is the first player (no lobby_info or empty players array or no adminId)
 				if (!lobbyData.lobby_info || !lobbyData.lobby_info.players || lobbyData.lobby_info.players.length === 0 || !lobbyData.lobby_info.adminId) {
 					console.log("First player - setting as admin");
-					// First player - becomes admin
 					updatedLobbyInfo = {
 						players: [newPlayer],
 						adminId: playerId,
 						settings: {
 							maxPlayers: 8,
 							isPrivate: false,
+							mutedPlayers: [],
 						},
 					};
+					isNewPlayer = true;
 				} else {
 					console.log("Existing lobby with players");
 					const existingPlayers = lobbyData.lobby_info.players as Player[];
 					const playerExists = existingPlayers.some(p => p.id === playerId);
 
 					if (!playerExists) {
-						// Add new player with lastSeen
 						updatedLobbyInfo = {
 							...lobbyData.lobby_info,
+							settings: {
+								...lobbyData.lobby_info.settings,
+								mutedPlayers: lobbyData.lobby_info.settings?.mutedPlayers || [],
+							},
 							players: [...existingPlayers, newPlayer],
 						};
+						isNewPlayer = true;
 					} else {
-						// Player already exists - update their lastSeen
 						updatedLobbyInfo = {
 							...lobbyData.lobby_info,
+							settings: {
+								...lobbyData.lobby_info.settings,
+								mutedPlayers: lobbyData.lobby_info.settings?.mutedPlayers || [],
+							},
 							players: existingPlayers.map(p => (p.id === playerId ? { ...p, lastSeen: now } : p)),
 						};
 					}
 				}
 
-				// Update lobby
 				const { data: updatedLobby, error: updateError } = await supabase.from("lobbies").update({ lobby_info: updatedLobbyInfo }).eq("id", lobbyData.id).select().single();
 
 				if (updateError || !updatedLobby) {
@@ -284,9 +316,28 @@ export default function LobbyPage() {
 				setLobby(updatedLobby);
 				setCurrentPlayer(newPlayer);
 				setGameType(updatedLobby.game_type || "");
+
+				// Send system message for new player
+				if (isNewPlayer) {
+					await supabase.from("lobby_messages").insert({
+						lobby_id: updatedLobby.id,
+						player_id: null,
+						player_name: null,
+						message: `${playerName} joined the lobby`,
+						is_system: true,
+					});
+				}
+
+				// Fetch messages (last 200)
+				const { data: messagesData } = await supabase.from("lobby_messages").select("*").eq("lobby_id", updatedLobby.id).order("created_at", { ascending: true }).limit(200);
+
+				if (messagesData) {
+					setMessages(messagesData);
+				}
+
 				setLoading(false);
 
-				// Setup realtime subscription
+				// Setup realtime subscription for lobby
 				const realtimeChannel = supabase
 					.channel(`lobby:${lobbyData.id}`)
 					.on(
@@ -305,6 +356,32 @@ export default function LobbyPage() {
 					.subscribe();
 
 				setChannel(realtimeChannel);
+
+				// Setup realtime subscription for messages
+				const msgChannel = supabase
+					.channel(`lobby_messages:${lobbyData.id}`)
+					.on(
+						"postgres_changes",
+						{
+							event: "INSERT",
+							schema: "public",
+							table: "lobby_messages",
+							filter: `lobby_id=eq.${lobbyData.id}`,
+						},
+						payload => {
+							setMessages(prev => {
+								const newMessages = [...prev, payload.new as Message];
+								// Keep only last 200 messages
+								if (newMessages.length > 200) {
+									return newMessages.slice(-200);
+								}
+								return newMessages;
+							});
+						}
+					)
+					.subscribe();
+
+				setMessagesChannel(msgChannel);
 			} catch (err) {
 				console.error(err);
 				setError("An error occurred");
@@ -318,10 +395,14 @@ export default function LobbyPage() {
 			if (channel) {
 				channel.unsubscribe();
 			}
+			if (messagesChannel) {
+				messagesChannel.unsubscribe();
+			}
 		};
 	}, [lobbyCode]);
 
 	const isAdmin = currentPlayer?.id === lobby?.lobby_info?.adminId;
+	const isMuted = lobby?.lobby_info?.settings?.mutedPlayers?.includes(currentPlayer?.id || "") || false;
 
 	const handleGameTypeChange = async (newGameType: string) => {
 		if (!isAdmin || !lobby) return;
@@ -330,6 +411,8 @@ export default function LobbyPage() {
 
 		if (error) {
 			console.error("Failed to update game type:", error);
+		} else {
+			await sendSystemMessage(`Game type set to: ${newGameType.replace("_", " ")}`);
 		}
 	};
 
@@ -351,27 +434,80 @@ export default function LobbyPage() {
 		}
 	};
 
+	const handleToggleMute = async (playerId: string, playerName: string) => {
+		if (!isAdmin || !lobby) return;
+
+		const mutedPlayers = lobby.lobby_info.settings.mutedPlayers || [];
+		const isMuted = mutedPlayers.includes(playerId);
+
+		const updatedMutedPlayers = isMuted ? mutedPlayers.filter(id => id !== playerId) : [...mutedPlayers, playerId];
+
+		const updatedInfo = {
+			...lobby.lobby_info,
+			settings: {
+				...lobby.lobby_info.settings,
+				mutedPlayers: updatedMutedPlayers,
+			},
+		};
+
+		const { error } = await supabase.from("lobbies").update({ lobby_info: updatedInfo }).eq("id", lobby.id);
+
+		if (error) {
+			console.error("Failed to toggle mute:", error);
+		} else {
+			await sendSystemMessage(`${playerName} has been ${isMuted ? "unmuted" : "muted"}`);
+		}
+	};
+
+	const handleSendMessage = async (e: React.FormEvent) => {
+		e.preventDefault();
+
+		if (!messageInput.trim() || !lobby || !currentPlayer || isMuted) return;
+
+		const trimmedMessage = messageInput.trim().slice(0, 200);
+
+		const { error } = await supabase.from("lobby_messages").insert({
+			lobby_id: lobby.id,
+			player_id: currentPlayer.id,
+			player_name: currentPlayer.name,
+			message: trimmedMessage,
+			is_system: false,
+		});
+
+		if (error) {
+			console.error("Failed to send message:", error);
+		} else {
+			setMessageInput("");
+		}
+	};
+
 	const handleLeaveLobby = async () => {
 		if (!lobby || !currentPlayer) return;
 
 		const updatedPlayers = lobby.lobby_info.players.filter(p => p.id !== currentPlayer.id);
 
-		// If this was the last player, delete the lobby
+		// Send system message
+		await sendSystemMessage(`${currentPlayer.name} left the lobby`);
+
 		if (updatedPlayers.length === 0) {
 			await supabase.from("lobbies").delete().eq("id", lobby.id);
 		} else {
-			// Otherwise update the lobby
 			let updatedInfo = { ...lobby.lobby_info, players: updatedPlayers };
 
-			// If admin leaves and there are other players, assign new admin
 			if (isAdmin) {
 				updatedInfo.adminId = updatedPlayers[0].id;
+				await sendSystemMessage(`${updatedPlayers[0].name} is now the admin`);
 			}
 
 			await supabase.from("lobbies").update({ lobby_info: updatedInfo }).eq("id", lobby.id);
 		}
 
 		router.push("/");
+	};
+
+	const formatTime = (timestamp: string) => {
+		const date = new Date(timestamp);
+		return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 	};
 
 	if (loading) {
@@ -406,29 +542,70 @@ export default function LobbyPage() {
 					</p>
 				</div>
 
-				<div className="lobby-grid">
-					{/* Left: Player List */}
+				<div className="lobby-grid-with-chat">
+					{/* Left: Chat */}
+					<div className="card chat-card">
+						<h2 className="card-title">Chat</h2>
+						<div className="chat-messages">
+							{messages.map(msg => (
+								<div key={msg.id} className={`chat-message ${msg.is_system ? "chat-message-system" : ""}`}>
+									{msg.is_system ? (
+										<div className="chat-message-content">
+											<span className="chat-system-text">{msg.message}</span>
+											<span className="chat-time">{formatTime(msg.created_at)}</span>
+										</div>
+									) : (
+										<div className="chat-message-content">
+											<div className="chat-message-header">
+												<span className="chat-player-name">{msg.player_name}</span>
+												<span className="chat-time">{formatTime(msg.created_at)}</span>
+											</div>
+											<div className="chat-message-text">{msg.message}</div>
+										</div>
+									)}
+								</div>
+							))}
+							<div ref={messagesEndRef} />
+						</div>
+						<form onSubmit={handleSendMessage} className="chat-input-form">
+							<input type="text" value={messageInput} onChange={e => setMessageInput(e.target.value)} placeholder={isMuted ? "You are muted" : "Type a message..."} disabled={isMuted} maxLength={200} className="chat-input" />
+							<button type="submit" disabled={!messageInput.trim() || isMuted} className="chat-send-button">
+								Send
+							</button>
+						</form>
+						{isMuted && <p className="muted-warning">You have been muted by the admin</p>}
+					</div>
+
+					{/* Middle: Player List */}
 					<div className="card">
 						<h2 className="card-title">Players</h2>
 						<div className="player-list">
-							{lobby.lobby_info.players.map(player => (
-								<div key={player.id} className={`player-card ${player.id === currentPlayer?.id ? "player-card-current" : ""}`}>
-									<div className="player-info">
-										<span className="player-name">{player.name}</span>
-										{player.id === lobby.lobby_info.adminId && <span className="admin-badge">ADMIN</span>}
+							{lobby.lobby_info.players.map(player => {
+								const playerMuted = lobby.lobby_info.settings.mutedPlayers?.includes(player.id);
+								return (
+									<div key={player.id} className={`player-card ${player.id === currentPlayer?.id ? "player-card-current" : ""}`}>
+										<div className="player-info">
+											<span className="player-name">{player.name}</span>
+											{player.id === lobby.lobby_info.adminId && <span className="admin-badge">ADMIN</span>}
+											{playerMuted && <span className="muted-badge">MUTED</span>}
+										</div>
+										{isAdmin && player.id !== currentPlayer?.id && (
+											<button onClick={() => handleToggleMute(player.id, player.name)} className="mute-button">
+												{playerMuted ? "Unmute" : "Mute"}
+											</button>
+										)}
 									</div>
-								</div>
-							))}
+								);
+							})}
 						</div>
 					</div>
 
-					{/* Right: Game Settings (Admin Only) */}
+					{/* Right: Game Settings */}
 					<div className="card">
 						<h2 className="card-title">Game Settings</h2>
 
 						{isAdmin ? (
 							<div className="settings-container">
-								{/* Game Type Selection */}
 								<div className="form-group">
 									<label className="form-label">Game Type</label>
 									<select value={gameType} onChange={e => handleGameTypeChange(e.target.value)} className="form-select">
@@ -440,13 +617,11 @@ export default function LobbyPage() {
 									</select>
 								</div>
 
-								{/* Max Players */}
 								<div className="form-group">
 									<label className="form-label">Max Players: {lobby.lobby_info.settings.maxPlayers}</label>
 									<input type="range" min="2" max="16" value={lobby.lobby_info.settings.maxPlayers} onChange={e => handleMaxPlayersChange(parseInt(e.target.value))} className="form-range" />
 								</div>
 
-								{/* Start Game Button */}
 								<button disabled={!gameType || lobby.lobby_info.players.length < 2} className="button button-success button-full">
 									Start Game
 								</button>
