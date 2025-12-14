@@ -145,6 +145,25 @@ export default function LobbyPage() {
 						setPlayers(data || []);
 					}
 				)
+				.on(
+					"postgres_changes",
+					{
+						event: "UPDATE",
+						schema: "public",
+						table: "lobbies",
+						filter: `id=eq.${lobbyData.id}`,
+					},
+					payload => {
+						const updatedLobby = payload.new as Lobby;
+						// If game_type was set and we're not the one who clicked (it's been set in DB)
+						if (updatedLobby.game_type && updatedLobby.game_type !== lobby?.game_type) {
+							setLobby(updatedLobby);
+							setGameType(updatedLobby.game_type);
+							// Navigate all players to the game
+							router.push(`/games/${updatedLobby.game_type}?code=${updatedLobby.code}`);
+						}
+					}
+				)
 				.subscribe();
 
 			messagesChannel.current = supabase
@@ -254,6 +273,16 @@ export default function LobbyPage() {
 		router.push("/");
 	};
 
+	const handleStartGame = async () => {
+		if (!lobby || !gameType || !isAdmin) return;
+
+		// Update lobby with selected game type
+		await supabase.from("lobbies").update({ game_type: gameType }).eq("id", lobby.id);
+
+		// Navigate admin to the game page
+		router.push(`/games/${gameType}?code=${lobby.code}`);
+	};
+
 	if (loading) return <div className="lobby-container">Loading…</div>;
 	if (error || !lobby) return <div className="lobby-container">{error}</div>;
 
@@ -350,7 +379,7 @@ export default function LobbyPage() {
 									<label className="form-label">Max Players: {lobby.settings.maxPlayers}</label>
 								</div>
 
-								<button disabled={!gameType || players.length < 2} className="button button-success button-full">
+								<button onClick={handleStartGame} disabled={!gameType || players.length < 2} className="button button-success button-full">
 									Start Game
 								</button>
 							</div>
