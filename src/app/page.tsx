@@ -9,6 +9,10 @@ export default function Home() {
 	const router = useRouter();
 	const [creating, setCreating] = useState(false);
 	const [joinCode, setJoinCode] = useState("");
+	const [username, setUsername] = useState("");
+	const [editingName, setEditingName] = useState(false);
+	const [saved, setSaved] = useState(false);
+
 	type Lobby = {
 		id: number;
 		code: string;
@@ -16,6 +20,12 @@ export default function Home() {
 		lobby_info: any | null;
 		created_at: string;
 	};
+	
+	useEffect(() => {
+		const existing = localStorage.getItem("player_name");
+		if (existing) setUsername(existing);
+	}, []);
+
 	
 	useEffect(() => {
 		let channel: any;
@@ -112,7 +122,55 @@ export default function Home() {
 
 	return (
 		<div className="min-h-screen bg-gray-900 text-white p-8">
-			<h1 className="text-4xl font-bold mb-8">Game Hub</h1>
+			{/* Top Bar */}
+			<div className="flex justify-between items-center mb-8">
+				<h1 className="text-4xl font-bold">Game Hub</h1>
+
+				{/* Username Display / Editor */}
+				<div className="flex items-center gap-3">
+					{editingName ? (
+						<>
+							<input
+								type="text"
+								value={username}
+								onChange={e => {
+									setUsername(e.target.value);
+									setSaved(false);
+								}}
+								maxLength={16}
+								className="px-3 py-2 rounded bg-gray-800 border border-gray-700 text-white focus:outline-none focus:border-blue-500"
+							/>
+							<button
+								onClick={() => {
+									const trimmed = username.trim();
+									if (trimmed.length < 3) return;
+
+									localStorage.setItem("player_name", trimmed);
+									setUsername(trimmed);
+									setSaved(true);
+									setEditingName(false);
+								}}
+								className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded font-semibold"
+							>
+								Save
+							</button>
+						</>
+					) : (
+						<>
+							<span className="text-gray-300">
+								👤 {username || "Guest"}
+							</span>
+							<button
+								onClick={() => setEditingName(true)}
+								className="text-blue-400 hover:text-blue-300 text-sm"
+							>
+								✏️ Edit
+							</button>
+						</>
+					)}
+				</div>
+			</div>
+
 
 			{/* Create Lobby Button */}
 			<div className="mb-8">
@@ -154,7 +212,8 @@ export default function Home() {
 			<h2 className="text-2xl font-bold mb-4">🌍 Public Lobbies</h2>
 
 			<div className="space-y-3 max-w-4xl">
-				{lobbies.length === 0 && (
+				{lobbies
+					.filter((lobby) => getPlayerCount(lobby) > 0).length === 0 && (
 					<p className="text-gray-400">No lobbies available yet</p>
 				)}
 
@@ -193,7 +252,6 @@ export default function Home() {
 					);
 				})}
 			</div>
-
 
 
 			<h2 className="text-2xl font-bold mb-4">Quick Play Games</h2>
