@@ -42,3 +42,16 @@ next-env.d.ts
 
 # auto-generated Next.js types
 /types
+
+# music files (large, potentially copyrighted)
+/public/music/*.mp3
+/public/music/*.ogg
+/public/music/*.wav
+/public/music/*.flac
+!/public/music/README.md
+
+# claude code plan files
+.claude/
+
+# unknown
+nul
