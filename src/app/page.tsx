@@ -105,7 +105,7 @@ export default function Home() {
 	return (
 		<div className="min-h-screen bg-gray-900 text-white p-8">
 			<div className="flex justify-between items-center mb-8">
-				<h1 className="text-4xl font-bold">Game Hub</h1>
+				<h1 className="text-4xl font-bold">Chizza Game Hub</h1>
 
 				<div className="flex items-center gap-3">
 					{editingName ? (

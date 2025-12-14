@@ -1,7 +1,13 @@
+# TODO
+## Current Stuff
+- Fix admin not transferring when the current admin leaves
+- Add Kick button for admins
+- Fix "player x joined" text so it shows up
+- Remove unnecessary files to clean up code
+
+## Future Ideas
 What to do:
 
-- Balls
-- Balls 2
 - Snake
 - Pong (Ai to start)
 - Tic tac toe
@@ -16,5 +22,4 @@ Ive always wanted to make a chess bot so maybe chess
 3D Stuff:
 
 - Like a tower defence game but 3d
-- 3D maze like labyrinth
 - Maybe a coop puzzle game like "we were here"
