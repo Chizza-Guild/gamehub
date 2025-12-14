@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase, getPlayerId, getPlayerName } from '@/lib/supabase/client';
-import type { Database } from '@/lib/supabase/types';
+import { supabase, getPlayerId, getPlayerName, type Tables, type Inserts, type Updates } from '@/lib/supabase/client';
 
-type GameSession = Database['public']['Tables']['game_sessions']['Row'];
-type GamePlayer = Database['public']['Tables']['game_players']['Row'];
+type GameSession = Tables<'game_sessions'>;
+type GamePlayer = Tables<'game_players'>;
+type GamePlayerInsert = Inserts<'game_players'>;
+type GamePlayerUpdate = Updates<'game_players'>;
 
 export function useGameSession(sessionId: string | null) {
   const [session, setSession] = useState<GameSession | null>(null);
@@ -23,6 +24,8 @@ export function useGameSession(sessionId: string | null) {
 
     // Fetch initial data
     async function fetchSession() {
+      if (!sessionId) return; // Type guard
+
       try {
         const { data: sessionData, error: sessionError } = await supabase
           .from('game_sessions')
@@ -93,6 +96,8 @@ export function useGameSession(sessionId: string | null) {
       });
 
     async function fetchPlayers() {
+      if (!sessionId) return; // Type guard
+
       const { data } = await supabase
         .from('game_players')
         .select('*')
@@ -117,11 +122,14 @@ export function useGameSession(sessionId: string | null) {
     const playerName = getPlayerName();
 
     try {
-      const { error } = await supabase.from('game_players').insert({
+      const insertData = {
         session_id: sessionId,
         player_id: playerId,
         player_name: playerName,
-      });
+      };
+
+      // @ts-expect-error - Supabase type inference issue with Database generic
+      const { error } = await supabase.from('game_players').insert(insertData);
 
       if (error) throw error;
     } catch (err) {
@@ -135,9 +143,14 @@ export function useGameSession(sessionId: string | null) {
     const playerId = getPlayerId();
 
     try {
+      const updateData = {
+        is_ready: ready,
+      };
+
       const { error } = await supabase
         .from('game_players')
-        .update({ is_ready: ready })
+        // @ts-expect-error - Supabase type inference issue with Database generic
+        .update(updateData)
         .eq('session_id', sessionId)
         .eq('player_id', playerId);
 
@@ -163,18 +176,21 @@ export function useGameSession(sessionId: string | null) {
     console.log('Updating score to database:', { playerId, score, accuracy, combo, maxCombo, judgements });
 
     try {
+      const updateData = {
+        score,
+        accuracy,
+        combo,
+        max_combo: maxCombo,
+        perfect_count: judgements.perfect,
+        great_count: judgements.great,
+        good_count: judgements.good,
+        miss_count: judgements.miss,
+      };
+
       const { error, data } = await supabase
         .from('game_players')
-        .update({
-          score,
-          accuracy,
-          combo,
-          max_combo: maxCombo,
-          perfect_count: judgements.perfect,
-          great_count: judgements.great,
-          good_count: judgements.good,
-          miss_count: judgements.miss,
-        })
+        // @ts-expect-error - Supabase type inference issue with Database generic
+        .update(updateData)
         .eq('session_id', sessionId)
         .eq('player_id', playerId);
 

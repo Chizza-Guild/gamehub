@@ -4,9 +4,11 @@
 	"private": true,
 	"scripts": {
 		"dev": "next dev",
-		"build": "rm -rf types && next build",
+		"build": "npm run type-check && rm -rf types && next build",
 		"start": "next start",
-		"lint": "eslint"
+		"lint": "eslint",
+		"type-check": "tsc --noEmit",
+		"prepare": "husky"
 	},
 	"dependencies": {
 		"@supabase/supabase-js": "^2.87.1",
@@ -25,6 +27,7 @@
 		"babel-plugin-react-compiler": "1.0.0",
 		"eslint": "^9",
 		"eslint-config-next": "16.0.10",
+		"husky": "^9.1.7",
 		"tailwindcss": "^4",
 		"typescript": "^5"
 	}

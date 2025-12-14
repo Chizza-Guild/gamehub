@@ -16,7 +16,18 @@ export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
       eventsPerSecond: 10, // Rate limiting for cost control
     },
   },
+  auth: {
+    persistSession: false,
+  },
 });
+
+// Export database types for use in components
+export type Tables<T extends keyof Database['public']['Tables']> =
+  Database['public']['Tables'][T]['Row'];
+export type Inserts<T extends keyof Database['public']['Tables']> =
+  Database['public']['Tables'][T]['Insert'];
+export type Updates<T extends keyof Database['public']['Tables']> =
+  Database['public']['Tables'][T]['Update'];
 
 /**
  * Generate or retrieve anonymous player ID from localStorage

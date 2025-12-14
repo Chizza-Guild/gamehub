@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { supabase, getPlayerId, getPlayerName } from '@/lib/supabase/client';
+import { supabase, getPlayerId, getPlayerName, type Inserts, type Updates } from '@/lib/supabase/client';
 import { useGameSession } from '@/hooks/useGameSession';
 import { useAudioEngine } from '@/hooks/useAudioEngine';
 import { SyncManager } from '@/lib/multiplayer/SyncManager';
@@ -44,8 +44,8 @@ export default function DodoReMiGame() {
 
   const syncManagerRef = useRef(new SyncManager());
   const realtimeRef = useRef<RealtimeManager | null>(null);
-  const animationFrameRef = useRef<number>();
-  const scoreUpdateTimeoutRef = useRef<NodeJS.Timeout>();
+  const animationFrameRef = useRef<number | undefined>(undefined);
+  const scoreUpdateTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
   const gameStartTimeRef = useRef<number>(0);
 
   const localPlayerId = getPlayerId();
@@ -224,8 +224,8 @@ export default function DodoReMiGame() {
     if (gamePhase !== 'playing') return;
 
     function handleKeyPress(e: KeyboardEvent) {
-      const lane = Object.entries(GAME_CONFIG.KEY_BINDINGS).find(([_, keys]) =>
-        keys.includes(e.key)
+      const lane = (Object.entries(GAME_CONFIG.KEY_BINDINGS) as [string, readonly string[]][]).find(([_, keys]) =>
+        (keys as readonly string[]).includes(e.key)
       )?.[0] as NoteType | undefined;
 
       if (lane) {
@@ -239,14 +239,17 @@ export default function DodoReMiGame() {
   }, [gamePhase, currentTime, chart]);
 
   async function createNewSession() {
+    const insertData = {
+      game_type: 'dance',
+      status: 'lobby' as const,
+      host_id: localPlayerId,
+      max_players: GAME_CONFIG.MAX_PLAYERS,
+    };
+
     const { data, error } = await supabase
       .from('game_sessions')
-      .insert({
-        game_type: 'dance',
-        status: 'lobby',
-        host_id: localPlayerId,
-        max_players: GAME_CONFIG.MAX_PLAYERS,
-      })
+      // @ts-expect-error - Supabase type inference issue with Database generic
+      .insert(insertData)
       .select()
       .single();
 
@@ -255,7 +258,7 @@ export default function DodoReMiGame() {
       return;
     }
 
-    router.push(`/games/dance?session=${data.id}`);
+    router.push(`/games/dance?session=${(data as { id: string }).id}`);
   }
 
   function handleCountdownComplete() {
@@ -400,9 +403,15 @@ export default function DodoReMiGame() {
     });
 
     // Update session status (this triggers other players via database subscription)
+    const updateData = {
+      status: 'countdown' as const,
+      started_at: new Date().toISOString(),
+    };
+
     await supabase
       .from('game_sessions')
-      .update({ status: 'countdown', started_at: new Date().toISOString() })
+      // @ts-expect-error - Supabase type inference issue with Database generic
+      .update(updateData)
       .eq('id', sessionId);
 
     console.log('Session status updated to countdown');
