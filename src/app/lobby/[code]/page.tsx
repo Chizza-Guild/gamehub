@@ -124,8 +124,6 @@ export default function LobbyPage() {
 
 			setPlayers(playersData || []);
 
-			await sendSystemMessage(`${playerName} joined the lobby`);
-
 			const { data: messagesData } = await supabase.from("lobby_messages").select("*").eq("lobby_id", lobbyData.id).order("created_at");
 
 			setMessages(messagesData || []);
@@ -164,6 +162,8 @@ export default function LobbyPage() {
 					}
 				)
 				.subscribe();
+
+			await sendSystemMessage(`${playerName} joined the lobby`);
 		};
 
 		init();
@@ -240,7 +240,7 @@ export default function LobbyPage() {
 
 		await supabase.from("lobby_players").update({ is_muted: !target.is_muted }).eq("lobby_id", lobby.id).eq("player_id", playerId);
 
-		await sendSystemMessage(`${name} ${target.is_muted ? "unmuted" : "muted"}`);
+		await sendSystemMessage(`${name} ${target.is_muted ? "unmuted by admin" : "muted by admin"}`);
 	};
 
 	const handleLeaveLobby = async () => {
