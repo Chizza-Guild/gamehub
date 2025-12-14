@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { supabase, getPlayerId, getPlayerName, type Inserts, type Updates } from '@/lib/supabase/client';
 import { useGameSession } from '@/hooks/useGameSession';
@@ -19,7 +19,7 @@ import {
 import { GAME_CONFIG } from './lib/constants';
 import type { NoteChart, PlayerScore, NoteType } from './types';
 
-export default function DodoReMiGame() {
+function DodoReMiGameContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const sessionId = searchParams.get('session');
@@ -606,4 +606,16 @@ export default function DodoReMiGame() {
   }
 
   return null;
+}
+
+export default function DodoReMiGame() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
+        <div className="text-2xl">Loading game...</div>
+      </div>
+    }>
+      <DodoReMiGameContent />
+    </Suspense>
+  );
 }
