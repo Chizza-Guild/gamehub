@@ -22,7 +22,7 @@ import type { NoteChart, PlayerScore, NoteType } from './types';
 function DodoReMiGameContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const sessionId = searchParams.get('session');
+  const lobbyCode = searchParams.get('code');
 
   const [gamePhase, setGamePhase] = useState<
     'lobby' | 'countdown' | 'playing' | 'results'
@@ -39,7 +39,7 @@ function DodoReMiGameContent() {
     joinSession,
     setReady,
     updateScore,
-  } = useGameSession(sessionId);
+  } = useGameSession(lobbyCode);
   const { initialized, initialize, stop, getCurrentTime } = useAudioEngine();
 
   const syncManagerRef = useRef(new SyncManager());
@@ -53,9 +53,9 @@ function DodoReMiGameContent() {
 
   // Initialize game
   useEffect(() => {
-    // Create or join session
-    if (!sessionId) {
-      createNewSession();
+    // Create or join lobby
+    if (!lobbyCode) {
+      createNewLobby();
     } else {
       joinSession();
     }
@@ -131,16 +131,17 @@ function DodoReMiGameContent() {
     });
   }, [players]);
 
-  // Watch for session status changes (for non-host players)
+  // Watch for lobby status changes (for non-host players)
   useEffect(() => {
     if (!session) return;
 
-    console.log('Session status changed:', session.status);
+    const lobbyInfo = session.lobby_info as any;
+    console.log('Lobby status changed:', lobbyInfo?.status);
 
-    if (session.status === 'countdown' && gamePhase === 'lobby') {
+    if (lobbyInfo?.status === 'countdown' && gamePhase === 'lobby') {
       // Calculate when the game should start
-      const startTime = session.started_at
-        ? new Date(session.started_at).getTime() + GAME_CONFIG.COUNTDOWN_DURATION
+      const startTime = lobbyInfo.started_at
+        ? new Date(lobbyInfo.started_at).getTime() + GAME_CONFIG.COUNTDOWN_DURATION
         : Date.now() + GAME_CONFIG.COUNTDOWN_DURATION;
 
       setGamePhase('countdown');
@@ -151,16 +152,16 @@ function DodoReMiGameContent() {
         initialize();
       }
     }
-  }, [session?.status]);
+  }, [session]);
 
-  // Setup realtime when session exists
+  // Setup realtime when lobby exists
   useEffect(() => {
-    if (!sessionId) return;
+    if (!lobbyCode) return;
 
     realtimeRef.current = new RealtimeManager();
 
     realtimeRef.current.connect({
-      sessionId,
+      sessionId: lobbyCode,
       onBroadcast: (payload) => {
         const { event, data } = payload;
         console.log('Received broadcast:', event, data);
@@ -187,7 +188,7 @@ function DodoReMiGameContent() {
     return () => {
       realtimeRef.current?.disconnect();
     };
-  }, [sessionId, initialized, initialize]);
+  }, [lobbyCode, initialized, initialize]);
 
   // Game loop
   useEffect(() => {
@@ -238,27 +239,34 @@ function DodoReMiGameContent() {
     return () => window.removeEventListener('keydown', handleKeyPress);
   }, [gamePhase, currentTime, chart]);
 
-  async function createNewSession() {
+  async function createNewLobby() {
+    // Generate a random 6-character lobby code
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+
     const insertData = {
       game_type: 'dance',
-      status: 'lobby' as const,
-      host_id: localPlayerId,
-      max_players: GAME_CONFIG.MAX_PLAYERS,
+      code,
+      lobby_info: {
+        status: 'lobby',
+        host_id: localPlayerId,
+        max_players: GAME_CONFIG.MAX_PLAYERS,
+        players: [],
+      },
     };
 
     const { data, error } = await supabase
-      .from('game_sessions')
+      .from('lobbies')
       // @ts-expect-error - Supabase type inference issue with Database generic
       .insert(insertData)
       .select()
       .single();
 
     if (error) {
-      console.error('Failed to create session:', error);
+      console.error('Failed to create lobby:', error);
       return;
     }
 
-    router.push(`/games/dance?session=${(data as { id: string }).id}`);
+    router.push(`/games/dance?code=${code}`);
   }
 
   function handleCountdownComplete() {
@@ -382,7 +390,7 @@ function DodoReMiGameContent() {
   }
 
   async function handleStartGame() {
-    if (!sessionId || !session) return;
+    if (!lobbyCode || !session) return;
 
     console.log('Host starting game...');
 
@@ -402,19 +410,21 @@ function DodoReMiGameContent() {
       startTime: syncedStartTime,
     });
 
-    // Update session status (this triggers other players via database subscription)
-    const updateData = {
-      status: 'countdown' as const,
+    // Update lobby status (this triggers other players via database subscription)
+    const currentInfo = session.lobby_info as any;
+    const updatedInfo = {
+      ...currentInfo,
+      status: 'countdown',
       started_at: new Date().toISOString(),
     };
 
     await supabase
-      .from('game_sessions')
+      .from('lobbies')
       // @ts-expect-error - Supabase type inference issue with Database generic
-      .update(updateData)
-      .eq('id', sessionId);
+      .update({ lobby_info: updatedInfo })
+      .eq('id', session.id);
 
-    console.log('Session status updated to countdown');
+    console.log('Lobby status updated to countdown');
 
     // Start locally for the host
     setGamePhase('countdown');
@@ -446,7 +456,7 @@ function DodoReMiGameContent() {
             <div className="space-y-2">
               {players.map((player) => (
                 <div
-                  key={player.id}
+                  key={player.player_id}
                   className="p-3 bg-gray-800 rounded flex justify-between items-center"
                 >
                   <span>{player.player_name}</span>
@@ -478,7 +488,7 @@ function DodoReMiGameContent() {
                 Ready
               </button>
 
-              {session?.host_id === localPlayerId && (
+              {(session?.lobby_info as any)?.host_id === localPlayerId && (
                 <button
                   onClick={handleStartGame}
                   disabled={
