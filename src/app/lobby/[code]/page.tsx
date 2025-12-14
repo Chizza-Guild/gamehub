@@ -83,8 +83,20 @@ export default function LobbyPage() {
 
 				let updatedLobbyInfo: LobbyInfo;
 
-				// Check if lobby_info exists and has players
-				if (lobbyData.lobby_info && lobbyData.lobby_info.players) {
+				// Check if this is the first player (no lobby_info or empty players array or no adminId)
+				if (!lobbyData.lobby_info || !lobbyData.lobby_info.players || lobbyData.lobby_info.players.length === 0 || !lobbyData.lobby_info.adminId) {
+					console.log("First player - setting as admin");
+					// First player - becomes admin
+					updatedLobbyInfo = {
+						players: [newPlayer],
+						adminId: playerId,
+						settings: {
+							maxPlayers: 8,
+							isPrivate: false,
+						},
+					};
+				} else {
+					console.log("Existing lobby with players");
 					const existingPlayers = lobbyData.lobby_info.players as Player[];
 					const playerExists = existingPlayers.some(p => p.id === playerId);
 
@@ -98,16 +110,6 @@ export default function LobbyPage() {
 						// Player already exists
 						updatedLobbyInfo = lobbyData.lobby_info;
 					}
-				} else {
-					// First player - becomes admin
-					updatedLobbyInfo = {
-						players: [newPlayer],
-						adminId: playerId,
-						settings: {
-							maxPlayers: 8,
-							isPrivate: false,
-						},
-					};
 				}
 
 				// Update lobby

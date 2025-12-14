@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -15,29 +15,23 @@ export default function Home() {
 			// Generate 6-character lobby code
 			const code = Math.random().toString(36).substring(2, 8).toUpperCase();
 
-			// Create lobby in database with initial structure
+			// Create lobby in database with NO initial lobby_info
+			// Let the lobby page set it up when first player joins
 			const { data, error } = await supabase
-				.from('lobbies')
+				.from("lobbies")
 				// @ts-expect-error - Supabase type inference issue with Database generic
 				.insert({
 					code,
 					game_type: null,
-					lobby_info: {
-						players: [],
-						adminId: '',
-						settings: {
-							maxPlayers: 8,
-							isPrivate: false,
-						},
-					},
+					lobby_info: null, // Changed from empty object to null
 				})
 				.select()
 				.single();
 
 			if (error) {
-				console.error('Failed to create lobby:', error);
-				console.error('Error details:', JSON.stringify(error, null, 2));
-				alert(`Failed to create lobby: ${error.message || 'Unknown error'}`);
+				console.error("Failed to create lobby:", error);
+				console.error("Error details:", JSON.stringify(error, null, 2));
+				alert(`Failed to create lobby: ${error.message || "Unknown error"}`);
 				setCreating(false);
 				return;
 			}
@@ -45,8 +39,8 @@ export default function Home() {
 			// Navigate to the lobby page
 			router.push(`/lobby/${code}`);
 		} catch (err) {
-			console.error('Error creating lobby:', err);
-			alert('An error occurred. Please try again.');
+			console.error("Error creating lobby:", err);
+			alert("An error occurred. Please try again.");
 			setCreating(false);
 		}
 	}
@@ -57,12 +51,8 @@ export default function Home() {
 
 			{/* Create Lobby Button */}
 			<div className="mb-8">
-				<button
-					onClick={createLobby}
-					disabled={creating}
-					className="px-6 py-3 bg-green-600 hover:bg-green-700 rounded-lg font-bold text-lg transition disabled:bg-gray-600 disabled:cursor-not-allowed"
-				>
-					{creating ? 'Creating Lobby...' : '🎲 Create Lobby'}
+				<button onClick={createLobby} disabled={creating} className="px-6 py-3 bg-green-600 hover:bg-green-700 rounded-lg font-bold text-lg transition disabled:bg-gray-600 disabled:cursor-not-allowed">
+					{creating ? "Creating Lobby..." : "🎲 Create Lobby"}
 				</button>
 				<p className="text-gray-400 text-sm mt-2">Create a multiplayer lobby and invite friends</p>
 			</div>
@@ -79,7 +69,7 @@ export default function Home() {
 					<p className="text-gray-400">Multiplayer rhythm game (2-8 players)</p>
 				</Link>
 
-                <Link href="/games/ruined" className="p-6 bg-gray-800 hover:bg-gray-700 rounded-lg border-2 border-gray-700 hover:border-blue-500 transition">
+				<Link href="/games/ruined" className="p-6 bg-gray-800 hover:bg-gray-700 rounded-lg border-2 border-gray-700 hover:border-blue-500 transition">
 					<h2 className="text-2xl font-bold mb-2">🎮 Ruin & Unruin</h2>
 					<p className="text-gray-400">Party game</p>
 				</Link>
