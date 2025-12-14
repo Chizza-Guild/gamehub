@@ -64,18 +64,6 @@ export default function DodoReMiGame() {
     const testChart = generateTestChart();
     setChart(testChart);
 
-    // Initialize local player score
-    const localScore: PlayerScore = {
-      playerId: localPlayerId,
-      playerName: localPlayerName,
-      score: 0,
-      accuracy: 0,
-      combo: 0,
-      maxCombo: 0,
-      judgements: { perfect: 0, great: 0, good: 0, miss: 0 },
-    };
-    setScores(new Map([[localPlayerId, localScore]]));
-
     return () => {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
@@ -86,6 +74,62 @@ export default function DodoReMiGame() {
       stop();
     };
   }, []);
+
+  // Initialize/update scores from players list
+  useEffect(() => {
+    if (players.length === 0) return;
+
+    console.log('Players data updated:', players);
+
+    setScores((prevScores) => {
+      const newScores = new Map(prevScores);
+
+      // Add/update all players
+      players.forEach((player) => {
+        console.log('Processing player:', player.player_name, 'Score:', player.score);
+
+        // If player doesn't exist in scores, create initial score
+        if (!newScores.has(player.player_id)) {
+          newScores.set(player.player_id, {
+            playerId: player.player_id,
+            playerName: player.player_name,
+            score: player.score || 0,
+            accuracy: player.accuracy || 0,
+            combo: player.combo || 0,
+            maxCombo: player.max_combo || 0,
+            judgements: {
+              perfect: player.perfect_count || 0,
+              great: player.great_count || 0,
+              good: player.good_count || 0,
+              miss: player.miss_count || 0,
+            },
+          });
+        } else {
+          // Update existing player's synced data from database
+          const existing = newScores.get(player.player_id)!;
+
+          // Only update if this is not the local player (local player updates immediately)
+          if (player.player_id !== localPlayerId) {
+            newScores.set(player.player_id, {
+              ...existing,
+              score: player.score || existing.score,
+              accuracy: player.accuracy || existing.accuracy,
+              combo: player.combo || existing.combo,
+              maxCombo: player.max_combo || existing.maxCombo,
+              judgements: {
+                perfect: player.perfect_count || existing.judgements.perfect,
+                great: player.great_count || existing.judgements.great,
+                good: player.good_count || existing.judgements.good,
+                miss: player.miss_count || existing.judgements.miss,
+              },
+            });
+          }
+        }
+      });
+
+      return newScores;
+    });
+  }, [players]);
 
   // Watch for session status changes (for non-host players)
   useEffect(() => {
@@ -302,8 +346,8 @@ export default function DodoReMiGame() {
         clearTimeout(scoreUpdateTimeoutRef.current);
       }
       scoreUpdateTimeoutRef.current = setTimeout(() => {
-        updateScore(newScore, accuracy, newCombo);
-      }, 1000);
+        updateScore(newScore, accuracy, newCombo, maxCombo, judgements);
+      }, 50); // Very fast updates for near real-time sync
 
       return newScores;
     });
@@ -539,7 +583,10 @@ export default function DodoReMiGame() {
 
         <div className="text-center mt-8">
           <button
-            onClick={() => router.push('/games/dance')}
+            onClick={() => {
+              // Full page reload to create new session
+              window.location.href = '/games/dance';
+            }}
             className="px-8 py-4 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold text-xl transition"
           >
             Play Again

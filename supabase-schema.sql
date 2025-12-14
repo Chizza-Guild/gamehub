@@ -24,6 +24,11 @@ CREATE TABLE IF NOT EXISTS game_players (
   score INTEGER DEFAULT 0,
   accuracy FLOAT DEFAULT 0,
   combo INTEGER DEFAULT 0,
+  max_combo INTEGER DEFAULT 0,
+  perfect_count INTEGER DEFAULT 0,
+  great_count INTEGER DEFAULT 0,
+  good_count INTEGER DEFAULT 0,
+  miss_count INTEGER DEFAULT 0,
   joined_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   UNIQUE(session_id, player_id)
 );

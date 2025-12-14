@@ -82,12 +82,15 @@ export function useGameSession(sessionId: string | null) {
           table: 'game_players',
           filter: `session_id=eq.${sessionId}`,
         },
-        () => {
+        (payload) => {
+          console.log('Player data changed:', payload);
           // Refetch players on any change
           fetchPlayers();
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log('Game session subscription status:', status);
+      });
 
     async function fetchPlayers() {
       const { data } = await supabase
@@ -149,20 +152,34 @@ export function useGameSession(sessionId: string | null) {
   const updateScore = async (
     score: number,
     accuracy: number,
-    combo: number
+    combo: number,
+    maxCombo: number,
+    judgements: { perfect: number; great: number; good: number; miss: number }
   ) => {
     if (!sessionId) return;
 
     const playerId = getPlayerId();
 
+    console.log('Updating score to database:', { playerId, score, accuracy, combo, maxCombo, judgements });
+
     try {
-      const { error } = await supabase
+      const { error, data } = await supabase
         .from('game_players')
-        .update({ score, accuracy, combo })
+        .update({
+          score,
+          accuracy,
+          combo,
+          max_combo: maxCombo,
+          perfect_count: judgements.perfect,
+          great_count: judgements.great,
+          good_count: judgements.good,
+          miss_count: judgements.miss,
+        })
         .eq('session_id', sessionId)
         .eq('player_id', playerId);
 
       if (error) throw error;
+      console.log('Score update successful:', data);
     } catch (err) {
       console.error('Failed to update score:', err);
     }

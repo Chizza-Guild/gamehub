@@ -58,6 +58,11 @@ export type Database = {
           score: number;
           accuracy: number;
           combo: number;
+          max_combo: number;
+          perfect_count: number;
+          great_count: number;
+          good_count: number;
+          miss_count: number;
           joined_at: string;
         };
         Insert: {
@@ -69,6 +74,11 @@ export type Database = {
           score?: number;
           accuracy?: number;
           combo?: number;
+          max_combo?: number;
+          perfect_count?: number;
+          great_count?: number;
+          good_count?: number;
+          miss_count?: number;
           joined_at?: string;
         };
         Update: {
@@ -80,6 +90,11 @@ export type Database = {
           score?: number;
           accuracy?: number;
           combo?: number;
+          max_combo?: number;
+          perfect_count?: number;
+          great_count?: number;
+          good_count?: number;
+          miss_count?: number;
           joined_at?: string;
         };
       };
