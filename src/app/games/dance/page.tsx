@@ -144,12 +144,13 @@ function DodoReMiGameContent() {
     if (!session) return;
 
     const lobbyInfo = session.lobby_info as any;
-    console.log('Lobby status changed:', lobbyInfo?.status);
+    const gameState = lobbyInfo?.game_state?.dance;
+    console.log('Game state changed:', gameState?.status);
 
-    if (lobbyInfo?.status === 'countdown' && gamePhase === 'lobby') {
+    if (gameState?.status === 'countdown' && gamePhase === 'lobby') {
       // Calculate when the game should start
-      const startTime = lobbyInfo.started_at
-        ? new Date(lobbyInfo.started_at).getTime() + GAME_CONFIG.COUNTDOWN_DURATION
+      const startTime = gameState.started_at
+        ? new Date(gameState.started_at).getTime() + GAME_CONFIG.COUNTDOWN_DURATION
         : Date.now() + GAME_CONFIG.COUNTDOWN_DURATION;
 
       setGamePhase('countdown');
@@ -160,7 +161,7 @@ function DodoReMiGameContent() {
         initialize();
       }
     }
-  }, [session]);
+  }, [session, gamePhase, initialized, initialize]);
 
   // Setup realtime when lobby exists
   useEffect(() => {
@@ -230,6 +231,40 @@ function DodoReMiGameContent() {
       lobbyChannel.unsubscribe();
     };
   }, [lobbyCode, gamePhase, initialized, initialize]);
+
+  // Update database when game finishes
+  useEffect(() => {
+    if (gamePhase !== 'results' || !session) return;
+
+    const updateGameStatus = async () => {
+      const currentInfo = session.lobby_info as any;
+      const gameState = currentInfo.game_state?.dance;
+
+      if (!gameState || gameState.status === 'finished') return;
+
+      const updatedInfo = {
+        ...currentInfo,
+        game_state: {
+          ...currentInfo.game_state,
+          dance: {
+            ...gameState,
+            status: 'finished',
+            finished_at: new Date().toISOString(),
+          },
+        },
+      };
+
+      await supabase
+        .from('lobbies')
+        // @ts-expect-error - Supabase type inference issue with Database generic
+        .update({ lobby_info: updatedInfo })
+        .eq('id', session.id);
+
+      console.log('Game status updated to finished');
+    };
+
+    updateGameStatus();
+  }, [gamePhase, session]);
 
   // Game loop
   useEffect(() => {
