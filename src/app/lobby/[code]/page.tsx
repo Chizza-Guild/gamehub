@@ -31,7 +31,7 @@ type Lobby = {
 export default function LobbyPage() {
 	const params = useParams();
 	const router = useRouter();
-	const lobbyCode = params.lobby_code as string;
+	const lobbyCode = params.code as string;
 
 	const [lobby, setLobby] = useState<Lobby | null>(null);
 	const [currentPlayer, setCurrentPlayer] = useState<Player | null>(null);

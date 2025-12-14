@@ -43,7 +43,7 @@ export default function Home() {
 			}
 
 			// Navigate to the lobby page
-			router.push(`/${code}`);
+			router.push(`/lobby/${code}`);
 		} catch (err) {
 			console.error('Error creating lobby:', err);
 			alert('An error occurred. Please try again.');
