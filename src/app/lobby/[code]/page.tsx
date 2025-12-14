@@ -41,6 +41,58 @@ export default function LobbyPage() {
 	const [channel, setChannel] = useState<RealtimeChannel | null>(null);
 
 	const supabase = createClient();
+	const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+	const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+
+	// Handle player cleanup on disconnect
+	useEffect(() => {
+		const handleBeforeUnload = () => {
+			if (lobby && currentPlayer) {
+				// Use sendBeacon for reliable cleanup on page unload
+				const updatedPlayers = lobby.lobby_info.players.filter(p => p.id !== currentPlayer.id);
+
+				// If this was the last player, delete the lobby
+				if (updatedPlayers.length === 0) {
+					fetch(`${supabaseUrl}/rest/v1/lobbies?id=eq.${lobby.id}`, {
+						method: "DELETE",
+						headers: {
+							"Content-Type": "application/json",
+							apikey: supabaseKey,
+							Authorization: `Bearer ${supabaseKey}`,
+						},
+						keepalive: true,
+					});
+				} else {
+					// Otherwise update the lobby
+					let updatedInfo = { ...lobby.lobby_info, players: updatedPlayers };
+
+					// If admin leaves and there are other players, assign new admin
+					if (currentPlayer.id === lobby.lobby_info.adminId) {
+						updatedInfo.adminId = updatedPlayers[0].id;
+					}
+
+					// Use fetch with keepalive for more reliable delivery
+					fetch(`${supabaseUrl}/rest/v1/lobbies?id=eq.${lobby.id}`, {
+						method: "PATCH",
+						headers: {
+							"Content-Type": "application/json",
+							apikey: supabaseKey,
+							Authorization: `Bearer ${supabaseKey}`,
+							Prefer: "return=minimal",
+						},
+						body: JSON.stringify({ lobby_info: updatedInfo }),
+						keepalive: true,
+					});
+				}
+			}
+		};
+
+		window.addEventListener("beforeunload", handleBeforeUnload);
+
+		return () => {
+			window.removeEventListener("beforeunload", handleBeforeUnload);
+		};
+	}, [lobby, currentPlayer]);
 
 	// Initialize lobby
 	useEffect(() => {
@@ -196,14 +248,20 @@ export default function LobbyPage() {
 
 		const updatedPlayers = lobby.lobby_info.players.filter(p => p.id !== currentPlayer.id);
 
-		let updatedInfo = { ...lobby.lobby_info, players: updatedPlayers };
+		// If this was the last player, delete the lobby
+		if (updatedPlayers.length === 0) {
+			await supabase.from("lobbies").delete().eq("id", lobby.id);
+		} else {
+			// Otherwise update the lobby
+			let updatedInfo = { ...lobby.lobby_info, players: updatedPlayers };
 
-		// If admin leaves and there are other players, assign new admin
-		if (isAdmin && updatedPlayers.length > 0) {
-			updatedInfo.adminId = updatedPlayers[0].id;
+			// If admin leaves and there are other players, assign new admin
+			if (isAdmin) {
+				updatedInfo.adminId = updatedPlayers[0].id;
+			}
+
+			await supabase.from("lobbies").update({ lobby_info: updatedInfo }).eq("id", lobby.id);
 		}
-
-		await supabase.from("lobbies").update({ lobby_info: updatedInfo }).eq("id", lobby.id);
 
 		router.push("/");
 	};
