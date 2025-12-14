@@ -2,13 +2,66 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase/client";
 
 export default function Home() {
 	const router = useRouter();
 	const [creating, setCreating] = useState(false);
 	const [joinCode, setJoinCode] = useState("");
+	type Lobby = {
+		id: number;
+		code: string;
+		game_type: string | null;
+		lobby_info: any | null;
+		created_at: string;
+	};
+	
+	useEffect(() => {
+		let channel: any;
+
+		async function loadLobbies() {
+			const { data, error } = await supabase
+				.from("lobbies")
+				.select("*")
+				.order("created_at", { ascending: false });
+
+			if (!error && data) {
+				setLobbies(data);
+			}
+		}
+
+		loadLobbies();
+
+		// Realtime subscription
+		channel = supabase
+			.channel("public:lobbies")
+			.on(
+				"postgres_changes",
+				{ event: "*", schema: "public", table: "lobbies" },
+				() => {
+					loadLobbies();
+				}
+			)
+			.subscribe();
+
+		return () => {
+			if (channel) supabase.removeChannel(channel);
+		};
+	}, []);
+	
+	function getPlayerCount(lobby: Lobby) {
+		const players = lobby.lobby_info?.players;
+		return Array.isArray(players) ? players.length : 0;
+	}
+
+	function getMaxPlayers(lobby: Lobby) {
+		return lobby.lobby_info?.maxPlayers ?? 8;
+	}
+
+
+
+	const [lobbies, setLobbies] = useState<Lobby[]>([]);
 
 	function joinLobby() {
 		const code = joinCode.trim().toUpperCase();
@@ -98,6 +151,49 @@ export default function Home() {
 					Enter a lobby code shared by a friend
 				</p>
 			</div>
+			<h2 className="text-2xl font-bold mb-4">🌍 Public Lobbies</h2>
+
+			<div className="space-y-3 max-w-4xl">
+				{lobbies.length === 0 && (
+					<p className="text-gray-400">No lobbies available yet</p>
+				)}
+
+				{lobbies
+					.filter((lobby) => getPlayerCount(lobby) > 0)
+					.map((lobby) => {
+					const players = getPlayerCount(lobby);
+					const maxPlayers = getMaxPlayers(lobby);
+
+					return (
+						<div
+							key={lobby.code}
+							className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-4 bg-gray-800 rounded-lg border border-gray-700"
+						>
+							<div>
+								<div className="font-mono text-lg tracking-widest">
+									{lobby.code}
+								</div>
+								<div className="text-sm text-gray-400">
+									{lobby.game_type ?? "Not started yet"} •{" "}
+									{players} / {maxPlayers} players
+								</div>
+								<div className="text-xs text-gray-500">
+									Created {new Date(lobby.created_at).toLocaleString()}
+								</div>
+							</div>
+
+							<button
+								onClick={() => router.push(`/lobby/${lobby.code}`)}
+								className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold transition disabled:bg-gray-600"
+								disabled={players >= maxPlayers}
+							>
+								{players >= maxPlayers ? "Full" : "Join"}
+							</button>
+						</div>
+					);
+				})}
+			</div>
+
 
 
 			<h2 className="text-2xl font-bold mb-4">Quick Play Games</h2>
