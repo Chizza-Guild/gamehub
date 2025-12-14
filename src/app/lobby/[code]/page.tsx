@@ -180,13 +180,122 @@ export default function LobbyPage() {
 	}, [lobby?.id, currentPlayer?.id]);
 
 	// Handle player cleanup on disconnect
+	// Add these refs near your other refs
+	const lobbyRef = useRef<Lobby | null>(null);
+	const playerRef = useRef<Player | null>(null);
+
+	// Keep refs synced with state
+	useEffect(() => {
+		lobbyRef.current = lobby;
+		playerRef.current = currentPlayer;
+	}, [lobby, currentPlayer]);
+
+	// FIXED: Heartbeat Effect
+	useEffect(() => {
+		const sendHeartbeat = async () => {
+			const currentLobby = lobbyRef.current;
+			const currentPlayer = playerRef.current;
+
+			if (!currentLobby || !currentPlayer) return;
+
+			const now = Date.now();
+			const updatedPlayers = currentLobby.lobby_info.players.map(p => (p.id === currentPlayer.id ? { ...p, lastSeen: now } : p));
+
+			const updatedInfo = { ...currentLobby.lobby_info, players: updatedPlayers };
+
+			console.log("Sending heartbeat...");
+			await supabase.from("lobbies").update({ lobby_info: updatedInfo }).eq("id", currentLobby.id);
+		};
+
+		// Only set the interval. Do not call sendHeartbeat() immediately here.
+		heartbeatIntervalRef.current = setInterval(sendHeartbeat, 10000);
+
+		return () => {
+			if (heartbeatIntervalRef.current) {
+				clearInterval(heartbeatIntervalRef.current);
+			}
+		};
+	}, []);
+
+	// FIXED: Cleanup Stale Players Effect
+	useEffect(() => {
+		const checkStalePlayers = async () => {
+			const currentLobby = lobbyRef.current;
+			if (!currentLobby) return;
+
+			const { data: freshLobby, error: fetchError } = await supabase.from("lobbies").select("*").eq("id", currentLobby.id).single();
+
+			if (fetchError || !freshLobby) {
+				console.error("Failed to fetch lobby for cleanup check:", fetchError);
+				return;
+			}
+
+			const now = Date.now();
+			const staleThreshold = 30000;
+
+			const activePlayers = freshLobby.lobby_info.players.filter((p: Player) => {
+				const timeSinceLastSeen = now - (p.lastSeen || p.joinedAt);
+				const isStale = timeSinceLastSeen >= staleThreshold;
+				if (isStale) {
+					console.log(`Player ${p.name} is stale`);
+				}
+				return !isStale;
+			});
+
+			if (activePlayers.length < freshLobby.lobby_info.players.length) {
+				const removedPlayers = freshLobby.lobby_info.players.filter((p: Player) => !activePlayers.some((ap: Player) => ap.id === p.id));
+
+				for (const player of removedPlayers) {
+					await sendSystemMessage(`${player.name} left the lobby (disconnected)`);
+				}
+
+				if (activePlayers.length === 0) {
+					console.log("No active players left, deleting lobby");
+					await supabase.from("lobbies").delete().eq("id", currentLobby.id);
+					router.push("/");
+					return;
+				}
+
+				let updatedInfo = { ...freshLobby.lobby_info, players: activePlayers };
+
+				const adminStillActive = activePlayers.some((p: Player) => p.id === freshLobby.lobby_info.adminId);
+				if (!adminStillActive) {
+					updatedInfo.adminId = activePlayers[0].id;
+					console.log(`New admin: ${activePlayers[0].name}`);
+					await sendSystemMessage(`${activePlayers[0].name} is now the admin`);
+				}
+
+				const { error: updateError } = await supabase.from("lobbies").update({ lobby_info: updatedInfo }).eq("id", currentLobby.id);
+
+				if (updateError) {
+					console.error("Failed to update lobby:", updateError);
+				}
+			}
+		};
+
+		// Only set interval, dependencies are empty because we use refs
+		const initialTimeout = setTimeout(checkStalePlayers, 15000);
+		cleanupIntervalRef.current = setInterval(checkStalePlayers, 15000);
+
+		return () => {
+			clearTimeout(initialTimeout);
+			if (cleanupIntervalRef.current) {
+				clearInterval(cleanupIntervalRef.current);
+			}
+		};
+	}, []);
+
+	// FIXED: Handle Before Unload
 	useEffect(() => {
 		const handleBeforeUnload = () => {
-			if (lobby && currentPlayer) {
-				const updatedPlayers = lobby.lobby_info.players.filter(p => p.id !== currentPlayer.id);
+			const currentLobby = lobbyRef.current;
+			const currentPlayer = playerRef.current;
+
+			if (currentLobby && currentPlayer) {
+				const updatedPlayers = currentLobby.lobby_info.players.filter(p => p.id !== currentPlayer.id);
 
 				if (updatedPlayers.length === 0) {
-					fetch(`${supabaseUrl}/rest/v1/lobbies?id=eq.${lobby.id}`, {
+					fetch(`${supabaseUrl}/rest/v1/lobbies?id=eq.${currentLobby.id}`, {
 						method: "DELETE",
 						headers: {
 							"Content-Type": "application/json",
@@ -196,13 +305,13 @@ export default function LobbyPage() {
 						keepalive: true,
 					});
 				} else {
-					let updatedInfo = { ...lobby.lobby_info, players: updatedPlayers };
+					let updatedInfo = { ...currentLobby.lobby_info, players: updatedPlayers };
 
-					if (currentPlayer.id === lobby.lobby_info.adminId) {
+					if (currentPlayer.id === currentLobby.lobby_info.adminId) {
 						updatedInfo.adminId = updatedPlayers[0].id;
 					}
 
-					fetch(`${supabaseUrl}/rest/v1/lobbies?id=eq.${lobby.id}`, {
+					fetch(`${supabaseUrl}/rest/v1/lobbies?id=eq.${currentLobby.id}`, {
 						method: "PATCH",
 						headers: {
 							"Content-Type": "application/json",
@@ -222,7 +331,7 @@ export default function LobbyPage() {
 		return () => {
 			window.removeEventListener("beforeunload", handleBeforeUnload);
 		};
-	}, [lobby, currentPlayer]);
+	}, []);
 
 	// Initialize lobby
 	useEffect(() => {
