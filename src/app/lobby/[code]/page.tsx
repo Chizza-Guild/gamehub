@@ -49,6 +49,7 @@ export default function LobbyPage() {
 	const [messages, setMessages] = useState<Message[]>([]);
 	const [messageInput, setMessageInput] = useState("");
 	const [gameType, setGameType] = useState("");
+	const [maxPlayers, setMaxPlayers] = useState(8);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [currentPlayerId, setCurrentPlayerId] = useState<string | null>(null);
@@ -59,6 +60,7 @@ export default function LobbyPage() {
 	const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
 	const cleanupRef = useRef<NodeJS.Timeout | null>(null);
 	const messagesEndRef = useRef<HTMLDivElement | null>(null);
+	const maxPlayersDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
 	const scrollToBottom = () => {
 		messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -74,6 +76,42 @@ export default function LobbyPage() {
 			message: text,
 			is_system: true,
 		});
+	};
+
+	const handleMaxPlayersChange = (value: number) => {
+		setMaxPlayers(value);
+
+		// Clear existing timeout
+		if (maxPlayersDebounceRef.current) {
+			clearTimeout(maxPlayersDebounceRef.current);
+		}
+
+		// Set new timeout to update database
+		maxPlayersDebounceRef.current = setTimeout(async () => {
+			if (!lobby) return;
+
+			await supabase
+				.from("lobbies")
+				.update({
+					settings: {
+						...lobby.settings,
+						maxPlayers: value,
+					},
+				})
+				.eq("id", lobby.id);
+
+			// Update local state
+			setLobby(prev => {
+				if (!prev) return prev;
+				return {
+					...prev,
+					settings: {
+						...prev.settings,
+						maxPlayers: value,
+					},
+				};
+			});
+		}, 500); // 500ms debounce
 	};
 
 	useEffect(() => {
@@ -106,6 +144,7 @@ export default function LobbyPage() {
 
 			setLobby(lobbyData);
 			setGameType(lobbyData.game_type || "");
+			setMaxPlayers(lobbyData.settings?.maxPlayers || 8);
 
 			await supabase.from("lobby_players").upsert({
 				lobby_id: lobbyData.id,
@@ -127,8 +166,8 @@ export default function LobbyPage() {
 			const { data: messagesData } = await supabase.from("lobby_messages").select("*").eq("lobby_id", lobbyData.id).order("created_at");
 
 			setMessages(messagesData || []);
-			setLoading(false);
 
+			// Set up channels FIRST
 			lobbyChannel.current = supabase
 				.channel(`lobby:${lobbyData.id}`)
 				.on(
@@ -147,6 +186,7 @@ export default function LobbyPage() {
 				)
 				.subscribe();
 
+			// Set up messages channel and wait for it to be subscribed
 			messagesChannel.current = supabase
 				.channel(`messages:${lobbyData.id}`)
 				.on(
@@ -168,11 +208,18 @@ export default function LobbyPage() {
 						}
 					}
 				)
-				.subscribe(status => {
+				.subscribe(async status => {
+					// Only send join message when channel is successfully subscribed
 					if (status === "SUBSCRIBED") {
-						sendSystemMessage(`${playerName} joined the lobby`);
+						await supabase.from("lobby_messages").insert({
+							lobby_id: lobbyData.id,
+							message: `${playerName} joined the lobby`,
+							is_system: true,
+						});
 					}
 				});
+
+			setLoading(false);
 		};
 
 		init();
@@ -180,6 +227,9 @@ export default function LobbyPage() {
 		return () => {
 			lobbyChannel.current?.unsubscribe();
 			messagesChannel.current?.unsubscribe();
+			if (maxPlayersDebounceRef.current) {
+				clearTimeout(maxPlayersDebounceRef.current);
+			}
 		};
 	}, [code]);
 
@@ -317,12 +367,12 @@ export default function LobbyPage() {
 							<div ref={messagesEndRef} />
 						</div>
 
-						<form onSubmit={handleSendMessage} className="chat-input-form">
-							<input type="text" value={messageInput} onChange={e => setMessageInput(e.target.value)} placeholder={isMuted ? "You are muted" : "Type a message..."} disabled={isMuted} maxLength={200} className="chat-input" />
-							<button type="submit" disabled={!messageInput.trim() || isMuted} className="chat-send-button">
+						<div className="chat-input-form">
+							<input type="text" value={messageInput} onChange={e => setMessageInput(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSendMessage(e)} placeholder={isMuted ? "You are muted" : "Type a message..."} disabled={isMuted} maxLength={200} className="chat-input" />
+							<button onClick={handleSendMessage} disabled={!messageInput.trim() || isMuted} className="chat-send-button">
 								Send
 							</button>
-						</form>
+						</div>
 
 						{isMuted && <p className="muted-warning">You have been muted by the admin</p>}
 					</div>
@@ -371,7 +421,8 @@ export default function LobbyPage() {
 								</div>
 
 								<div className="form-group">
-									<label className="form-label">Max Players: {lobby.settings.maxPlayers}</label>
+									<label className="form-label">Max Players: {maxPlayers}</label>
+									<input type="range" min="2" max="16" value={maxPlayers} onChange={e => handleMaxPlayersChange(parseInt(e.target.value))} className="form-range" />
 								</div>
 
 								<button onClick={handleStartGame} disabled={!gameType || players.length < 2} className="button button-success button-full">

@@ -1,9 +1,10 @@
 # TODO
 ## Current Stuff
 - Fix admin not transferring when the current admin leaves
-- Add Kick button for admins
-- Fix "player x joined" text so it shows up
+- Add Kick button for admins which should return the player to main menu
 - Remove unnecessary files to clean up code
+- Add private lobby option
+- Fix the mouse request thingy
 
 ## Future Ideas
 What to do:
