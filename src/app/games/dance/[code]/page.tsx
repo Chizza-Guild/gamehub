@@ -21,7 +21,7 @@ import type { NoteChart, PlayerScore, NoteType } from '../types';
 
 function DodoReMiGameContent() {
   const router = useRouter();
-  const { lobbyCode } = useParams<{ lobbyCode: string }>();
+  const { code } = useParams<{ code: string }>();
   const [gamePhase, setGamePhase] = useState<
     'lobby' | 'countdown' | 'playing' | 'results'
   >('countdown');
@@ -44,8 +44,9 @@ function DodoReMiGameContent() {
 
   // Initialize game
   useEffect(() => {
-    if (!lobbyCode) {
+    if (!code) {
       console.error('No lobby code provided');
+      console.log(code);
       return;
     }
 
@@ -100,10 +101,10 @@ function DodoReMiGameContent() {
 
   // Setup realtime for multiplayer score syncing
   useEffect(() => {
-    if (!lobbyCode) return;
+    if (!code) return;
 
     const gameChannel = supabase
-      .channel(`game:${lobbyCode}`)
+      .channel(`game:${code}`)
       .on('broadcast', { event: 'score-update' }, (payload) => {
         const { playerId, playerName, scoreData } = payload.payload;
 
@@ -165,7 +166,7 @@ function DodoReMiGameContent() {
       gameChannel.unsubscribe();
       gameChannelRef.current = null;
     };
-  }, [lobbyCode, localPlayerId, localPlayerName]);
+  }, [code, localPlayerId, localPlayerName]);
 
 
 
@@ -444,7 +445,7 @@ function DodoReMiGameContent() {
 
         <div className="text-center mt-8">
           <button
-            onClick={() => router.push(`/lobby/${lobbyCode}`)}
+            onClick={() => router.push(`/lobby/${code}`)}
             className="px-8 py-4 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold text-xl transition"
           >
             Return to Lobby
