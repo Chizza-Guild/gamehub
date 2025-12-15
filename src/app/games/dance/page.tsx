@@ -26,20 +26,12 @@ function DodoReMiGameContent() {
 
   const [gamePhase, setGamePhase] = useState<
     'lobby' | 'countdown' | 'playing' | 'results'
-  >('lobby');
+  >('countdown');
   const [chart, setChart] = useState<NoteChart | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [scores, setScores] = useState<Map<string, PlayerScore>>(new Map());
   const [countdownStartTime, setCountdownStartTime] = useState(0);
 
-  const {
-    session,
-    players,
-    loading,
-    joinSession,
-    setReady,
-    updateScore,
-  } = useGameSession(lobbyCode);
   const { initialized, initialize, stop, getCurrentTime } = useAudioEngine();
 
   const syncManagerRef = useRef(new SyncManager());
@@ -47,15 +39,10 @@ function DodoReMiGameContent() {
   const animationFrameRef = useRef<number | undefined>(undefined);
   const scoreUpdateTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
   const gameStartTimeRef = useRef<number>(0);
+  const gameChannelRef = useRef<any>(null);
 
   const localPlayerId = getPlayerId();
   const localPlayerName = getPlayerName();
-
-  // Helper function to get player name from lobby players list
-  const getPlayerNameById = (playerId: string): string => {
-    const lobbyPlayer = session?.lobby_info?.players?.find(p => p.id === playerId);
-    return lobbyPlayer?.name || 'Unknown Player';
-  };
 
   // Initialize game
   useEffect(() => {
@@ -64,12 +51,16 @@ function DodoReMiGameContent() {
       return;
     }
 
-    // Join existing lobby
-    joinSession();
-
     // Load chart
     const testChart = generateTestChart();
     setChart(testChart);
+
+    // Start countdown immediately
+    const startTime = Date.now() + GAME_CONFIG.COUNTDOWN_DURATION;
+    setCountdownStartTime(startTime);
+
+    // Initialize audio
+    initialize();
 
     return () => {
       if (animationFrameRef.current) {
@@ -80,191 +71,105 @@ function DodoReMiGameContent() {
       }
       stop();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Initialize/update scores from players list
+  // Initialize local player score
   useEffect(() => {
-    if (players.length === 0) return;
-
-    console.log('Players data updated:', players);
+    if (!localPlayerId || !localPlayerName) return;
 
     setScores((prevScores) => {
+      if (prevScores.has(localPlayerId)) return prevScores;
+
       const newScores = new Map(prevScores);
+      newScores.set(localPlayerId, {
+        playerId: localPlayerId,
+        playerName: localPlayerName,
+        score: 0,
+        accuracy: 0,
+        combo: 0,
+        maxCombo: 0,
+        judgements: {
+          perfect: 0,
+          great: 0,
+          good: 0,
+          miss: 0,
+        },
+      });
+      return newScores;
+    });
+  }, [localPlayerId, localPlayerName]);
 
-      // Add/update all players
-      players.forEach((player) => {
-        const playerName = getPlayerNameById(player.player_id);
-        console.log('Processing player:', playerName, 'Score:', player.score);
+  // Setup realtime for multiplayer score syncing
+  useEffect(() => {
+    if (!lobbyCode) return;
 
-        // If player doesn't exist in scores, create initial score
-        if (!newScores.has(player.player_id)) {
-          newScores.set(player.player_id, {
-            playerId: player.player_id,
-            playerName: playerName,
-            score: player.score || 0,
-            accuracy: player.accuracy || 0,
-            combo: player.combo || 0,
-            maxCombo: player.max_combo || 0,
+    const gameChannel = supabase
+      .channel(`game:${lobbyCode}`)
+      .on('broadcast', { event: 'score-update' }, (payload) => {
+        const { playerId, playerName, scoreData } = payload.payload;
+
+        // Don't update our own score from broadcasts (we update it locally)
+        if (playerId === localPlayerId) return;
+
+        setScores((prev) => {
+          const newScores = new Map(prev);
+          newScores.set(playerId, {
+            playerId,
+            playerName,
+            ...scoreData,
+          });
+          return newScores;
+        });
+      })
+      .on('broadcast', { event: 'player-joined' }, (payload) => {
+        const { playerId, playerName } = payload.payload;
+
+        setScores((prev) => {
+          if (prev.has(playerId)) return prev;
+
+          const newScores = new Map(prev);
+          newScores.set(playerId, {
+            playerId,
+            playerName,
+            score: 0,
+            accuracy: 0,
+            combo: 0,
+            maxCombo: 0,
             judgements: {
-              perfect: player.perfect_count || 0,
-              great: player.great_count || 0,
-              good: player.good_count || 0,
-              miss: player.miss_count || 0,
+              perfect: 0,
+              great: 0,
+              good: 0,
+              miss: 0,
             },
           });
-        } else {
-          // Update existing player's synced data from database
-          const existing = newScores.get(player.player_id)!;
+          return newScores;
+        });
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          // Store channel ref for broadcasting
+          gameChannelRef.current = gameChannel;
 
-          // Only update if this is not the local player (local player updates immediately)
-          if (player.player_id !== localPlayerId) {
-            newScores.set(player.player_id, {
-              ...existing,
-              score: player.score || existing.score,
-              accuracy: player.accuracy || existing.accuracy,
-              combo: player.combo || existing.combo,
-              maxCombo: player.max_combo || existing.maxCombo,
-              judgements: {
-                perfect: player.perfect_count || existing.judgements.perfect,
-                great: player.great_count || existing.judgements.great,
-                good: player.good_count || existing.judgements.good,
-                miss: player.miss_count || existing.judgements.miss,
-              },
-            });
-          }
+          // Announce our presence to other players
+          await gameChannel.send({
+            type: 'broadcast',
+            event: 'player-joined',
+            payload: {
+              playerId: localPlayerId,
+              playerName: localPlayerName,
+            },
+          });
         }
       });
 
-      return newScores;
-    });
-  }, [players]);
-
-  // Watch for lobby status changes (for non-host players)
-  useEffect(() => {
-    if (!session) return;
-
-    const lobbyInfo = session.lobby_info as any;
-    const gameState = lobbyInfo?.game_state?.dance;
-    console.log('Game state changed:', gameState?.status);
-
-    if (gameState?.status === 'countdown' && gamePhase === 'lobby') {
-      // Calculate when the game should start
-      const startTime = gameState.started_at
-        ? new Date(gameState.started_at).getTime() + GAME_CONFIG.COUNTDOWN_DURATION
-        : Date.now() + GAME_CONFIG.COUNTDOWN_DURATION;
-
-      setGamePhase('countdown');
-      setCountdownStartTime(startTime);
-
-      // Initialize audio
-      if (!initialized) {
-        initialize();
-      }
-    }
-  }, [session, gamePhase, initialized, initialize]);
-
-  // Setup realtime when lobby exists
-  useEffect(() => {
-    if (!lobbyCode) return;
-
-    realtimeRef.current = new RealtimeManager();
-
-    realtimeRef.current.connect({
-      sessionId: lobbyCode,
-      onBroadcast: (payload) => {
-        const { event, data } = payload;
-        console.log('Received broadcast:', event, data);
-
-        switch (event) {
-          case 'game-start':
-            setGamePhase('countdown');
-            setCountdownStartTime(data.startTime);
-            if (!initialized) {
-              initialize();
-            }
-            break;
-          case 'score-update':
-            setScores((prev) => {
-              const newScores = new Map(prev);
-              newScores.set(data.playerId, data.score);
-              return newScores;
-            });
-            break;
-        }
-      },
-    });
-
     return () => {
-      realtimeRef.current?.disconnect();
+      gameChannel.unsubscribe();
+      gameChannelRef.current = null;
     };
-  }, [lobbyCode, initialized, initialize]);
+  }, [lobbyCode, localPlayerId, localPlayerName]);
 
-  // Watch for game state changes (for game start from lobby)
-  useEffect(() => {
-    if (!lobbyCode) return;
 
-    const lobbyChannel = supabase
-      .channel(`dance-game:${lobbyCode}`)
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'lobbies',
-        filter: `code=eq.${lobbyCode}`,
-      }, (payload: any) => {
-        const gameState = payload.new?.lobby_info?.game_state?.dance;
-        if (gameState?.status === 'countdown' && gamePhase === 'lobby') {
-          const startTime = gameState.started_at
-            ? new Date(gameState.started_at).getTime() + GAME_CONFIG.COUNTDOWN_DURATION
-            : Date.now() + GAME_CONFIG.COUNTDOWN_DURATION;
-
-          setGamePhase('countdown');
-          setCountdownStartTime(startTime);
-
-          if (!initialized) {
-            initialize();
-          }
-        }
-      })
-      .subscribe();
-
-    return () => {
-      lobbyChannel.unsubscribe();
-    };
-  }, [lobbyCode, gamePhase, initialized, initialize]);
-
-  // Update database when game finishes
-  useEffect(() => {
-    if (gamePhase !== 'results' || !session) return;
-
-    const updateGameStatus = async () => {
-      const currentInfo = session.lobby_info as any;
-      const gameState = currentInfo.game_state?.dance;
-
-      if (!gameState || gameState.status === 'finished') return;
-
-      const updatedInfo = {
-        ...currentInfo,
-        game_state: {
-          ...currentInfo.game_state,
-          dance: {
-            ...gameState,
-            status: 'finished',
-            finished_at: new Date().toISOString(),
-          },
-        },
-      };
-
-      await supabase
-        .from('lobbies')
-        // @ts-expect-error - Supabase type inference issue with Database generic
-        .update({ lobby_info: updatedInfo })
-        .eq('id', session.id);
-
-      console.log('Game status updated to finished');
-    };
-
-    updateGameStatus();
-  }, [gamePhase, session]);
 
   // Game loop
   useEffect(() => {
@@ -398,13 +303,24 @@ function DodoReMiGameContent() {
 
       newScores.set(localPlayerId, updated);
 
-      // Debounced score sync to database
-      if (scoreUpdateTimeoutRef.current) {
-        clearTimeout(scoreUpdateTimeoutRef.current);
+      // Broadcast score update to other players
+      if (gameChannelRef.current) {
+        gameChannelRef.current.send({
+          type: 'broadcast',
+          event: 'score-update',
+          payload: {
+            playerId: localPlayerId,
+            playerName: localPlayerName,
+            scoreData: {
+              score: newScore,
+              accuracy,
+              combo: newCombo,
+              maxCombo,
+              judgements,
+            },
+          },
+        });
       }
-      scoreUpdateTimeoutRef.current = setTimeout(() => {
-        updateScore(newScore, accuracy, newCombo, maxCombo, judgements);
-      }, 50); // Very fast updates for near real-time sync
 
       return newScores;
     });
@@ -433,30 +349,6 @@ function DodoReMiGameContent() {
           : null
       );
     }
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
-        <div className="text-2xl">Loading...</div>
-      </div>
-    );
-  }
-
-  if (gamePhase === 'lobby') {
-    return (
-      <div className="flex items-center justify-center h-screen bg-gray-900 text-white">
-        <div className="text-center">
-          <p className="text-xl mb-4">Waiting for host to start game...</p>
-          <button
-            onClick={() => router.push(`/lobby/${lobbyCode}`)}
-            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg font-bold"
-          >
-            Return to Lobby
-          </button>
-        </div>
-      </div>
-    );
   }
 
   if (gamePhase === 'countdown') {

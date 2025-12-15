@@ -25,7 +25,6 @@ type Lobby = {
 	code: string;
 	game_type: string | null;
 	settings: LobbySettings;
-	lobby_info?: any;
 };
 
 type Message = {
@@ -85,7 +84,7 @@ export default function LobbyPage() {
 			let playerName = localStorage.getItem("playerName");
 
 			if (!playerId) {
-				playerId = crypto.randomUUID();
+				playerId = window.crypto.randomUUID();
 				localStorage.setItem("playerId", playerId);
 			}
 
@@ -146,25 +145,6 @@ export default function LobbyPage() {
 						setPlayers(data || []);
 					}
 				)
-				.on(
-					"postgres_changes",
-					{
-						event: "UPDATE",
-						schema: "public",
-						table: "lobbies",
-						filter: `id=eq.${lobbyData.id}`,
-					},
-					payload => {
-						const updatedLobby = payload.new as Lobby;
-						// If game_type was set and we're not the one who clicked (it's been set in DB)
-						if (updatedLobby.game_type && updatedLobby.game_type !== lobby?.game_type) {
-							setLobby(updatedLobby);
-							setGameType(updatedLobby.game_type);
-							// Navigate all players to the game
-							router.push(`/games/${updatedLobby.game_type}?code=${updatedLobby.code}`);
-						}
-					}
-				)
 				.subscribe();
 
 			messagesChannel.current = supabase
@@ -178,7 +158,14 @@ export default function LobbyPage() {
 						filter: `lobby_id=eq.${lobbyData.id}`,
 					},
 					payload => {
-						setMessages(prev => [...prev, payload.new as Message].slice(-200));
+						const newMessage = payload.new as Message;
+						setMessages(prev => [...prev, newMessage].slice(-200));
+
+						// Check if this is a game start message
+						if (newMessage.is_system && newMessage.message.startsWith("GAME_START:")) {
+							const gameType = newMessage.message.replace("GAME_START:", "");
+							router.push(`/games/${gameType}?code=${code}`);
+						}
 					}
 				)
 				.subscribe(status => {
@@ -277,26 +264,15 @@ export default function LobbyPage() {
 	const handleStartGame = async () => {
 		if (!lobby || !gameType || !isAdmin) return;
 
-		// Prepare lobby_info with game state
-		const lobbyInfo = {
-			players: players.map(p => ({
-				id: p.player_id,
-				name: p.name,
-				is_admin: p.is_admin,
-			})),
-			game_state: {
-				[gameType]: {
-					status: 'countdown',
-					started_at: new Date().toISOString(),
-				},
-			},
-		};
+		// Create a game start message in the database that all clients will see
+		await supabase.from("lobby_messages").insert({
+			lobby_id: lobby.id,
+			message: `GAME_START:${gameType}`,
+			is_system: true,
+		});
 
-		// Update lobby with selected game type and game state
-		await supabase.from("lobbies").update({
-			game_type: gameType,
-			lobby_info: lobbyInfo,
-		}).eq("id", lobby.id);
+		// Update lobby with selected game type
+		await supabase.from("lobbies").update({ game_type: gameType }).eq("id", lobby.id);
 
 		// Navigate admin to the game page
 		router.push(`/games/${gameType}?code=${lobby.code}`);
