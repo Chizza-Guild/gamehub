@@ -61,6 +61,7 @@ export default function MazeGame() {
 	const [error, setError] = useState<string | null>(null);
 	const [winner, setWinner] = useState<string | null>(null);
 	const [lobbyId, setLobbyId] = useState<number | null>(null);
+	const [waitingForMaze, setWaitingForMaze] = useState(false);
 
 	const sceneRef = useRef<THREE.Scene | null>(null);
 	const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -76,6 +77,7 @@ export default function MazeGame() {
 	const playerColorRef = useRef<string>("");
 	const lastUpdateRef = useRef<number>(0);
 	const channelRef = useRef<any>(null);
+	const lobbyChannelRef = useRef<any>(null);
 
 	useEffect(() => {
 		if (!code) {
@@ -112,6 +114,59 @@ export default function MazeGame() {
 
 				setLobbyId(lobbyData.id);
 
+				const { data: playerData } = await supabase.from("lobby_players").select("is_admin").eq("lobby_id", lobbyData.id).eq("player_id", playerId).single();
+
+				const isAdmin = playerData?.is_admin || false;
+
+				let layout: string[] | undefined = lobbyData.settings?.mazeLayout;
+
+				if (!layout) {
+					if (isAdmin) {
+						layout = generateMaze(20);
+						const { error: updateError } = await supabase
+							.from("lobbies")
+							.update({
+								settings: {
+									...lobbyData.settings,
+									mazeLayout: layout,
+								},
+							})
+							.eq("id", lobbyData.id);
+
+						if (updateError) {
+							console.error("Failed to save maze:", updateError);
+							setError("Failed to generate maze");
+							return;
+						}
+					} else {
+						setWaitingForMaze(true);
+						setLoading(false);
+
+						lobbyChannelRef.current = supabase
+							.channel(`lobby-settings:${lobbyData.id}`)
+							.on(
+								"postgres_changes",
+								{
+									event: "UPDATE",
+									schema: "public",
+									table: "lobbies",
+									filter: `id=eq.${lobbyData.id}`,
+								},
+								async payload => {
+									const newSettings = (payload.new as any).settings;
+									if (newSettings?.mazeLayout) {
+										setWaitingForMaze(false);
+										lobbyChannelRef.current?.unsubscribe();
+										init();
+									}
+								}
+							)
+							.subscribe();
+
+						return;
+					}
+				}
+
 				const scene = new THREE.Scene();
 				scene.background = new THREE.Color(0x0a0a0a);
 				sceneRef.current = scene;
@@ -135,23 +190,6 @@ export default function MazeGame() {
 				const floor = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshStandardMaterial({ color: 0x1a1a2e }));
 				floor.rotation.x = -Math.PI / 2;
 				scene.add(floor);
-
-				let layout: string[];
-
-				if (lobbyData.settings?.mazeLayout) {
-					layout = lobbyData.settings.mazeLayout;
-				} else {
-					layout = generateMaze(20);
-					await supabase
-						.from("lobbies")
-						.update({
-							settings: {
-								...lobbyData.settings,
-								mazeLayout: layout,
-							},
-						})
-						.eq("id", lobbyData.id);
-				}
 
 				mazeLayoutRef.current = layout;
 				const walls: THREE.Mesh[] = [];
@@ -207,6 +245,7 @@ export default function MazeGame() {
 				);
 
 				if (insertError) {
+					console.error("Insert error:", insertError);
 					setError(`Position insert error: ${insertError.message}`);
 					return;
 				}
@@ -403,22 +442,31 @@ export default function MazeGame() {
 					if (now - lastUpdateRef.current > 150) {
 						lastUpdateRef.current = now;
 
+						const updateData = {
+							lobby_id: lobbyData!.id,
+							player_id: playerId,
+							player_name: playerName,
+							x: camera.position.x,
+							y: camera.position.y,
+							z: camera.position.z,
+							yaw: yaw,
+							pitch: pitch,
+							color: playerColorRef.current,
+							last_updated: new Date().toISOString(),
+						};
+
+						console.log("Sending position update:", updateData);
+
 						supabase
 							.from("maze_positions")
-							.upsert({
-								lobby_id: lobbyData!.id,
-								player_id: playerId,
-								player_name: playerName,
-								x: camera.position.x,
-								y: camera.position.y,
-								z: camera.position.z,
-								yaw: yaw,
-								pitch: pitch,
-								color: playerColorRef.current,
-								last_updated: new Date().toISOString(),
-							})
-							.then(({ error }) => {
-								if (error) console.error("Position update error:", error);
+							.upsert(updateData, { onConflict: "lobby_id,player_id" })
+							.then(({ data, error }) => {
+								if (error) {
+									console.error("Position update error:", error);
+									console.error("Error details:", JSON.stringify(error, null, 2));
+								} else {
+									console.log("Position update success:", data);
+								}
 							});
 					}
 
@@ -482,6 +530,7 @@ export default function MazeGame() {
 					}
 				};
 			} catch (err) {
+				console.error("Init error:", err);
 				if (mounted) {
 					const errorMsg = err instanceof Error ? err.message : String(err);
 					setError(`Exception: ${errorMsg}`);
@@ -494,6 +543,9 @@ export default function MazeGame() {
 
 		return () => {
 			mounted = false;
+			if (lobbyChannelRef.current) {
+				lobbyChannelRef.current.unsubscribe();
+			}
 		};
 	}, [code, router]);
 
@@ -512,6 +564,28 @@ export default function MazeGame() {
 				}}
 			>
 				Error: {error}
+			</div>
+		);
+	}
+
+	if (waitingForMaze) {
+		return (
+			<div
+				style={{
+					position: "fixed",
+					inset: 0,
+					display: "flex",
+					flexDirection: "column",
+					alignItems: "center",
+					justifyContent: "center",
+					background: "#0a0a0a",
+					color: "white",
+					fontSize: "24px",
+					gap: "20px",
+				}}
+			>
+				<div>Waiting for admin to generate maze...</div>
+				<div style={{ fontSize: "16px", opacity: 0.7 }}>The game will start automatically once the maze is ready</div>
 			</div>
 		);
 	}
