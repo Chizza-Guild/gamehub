@@ -204,7 +204,7 @@ export default function LobbyPage() {
 						// Check if this is a game start message
 						if (newMessage.is_system && newMessage.message.startsWith("GAME_START:")) {
 							const gameType = newMessage.message.replace("GAME_START:", "");
-							router.push(`/games/${gameType}?code=${code}`);
+							router.push(`/games/${gameType}/${code}`);
 						}
 					}
 				)
@@ -325,7 +325,7 @@ export default function LobbyPage() {
 		await supabase.from("lobbies").update({ game_type: gameType }).eq("id", lobby.id);
 
 		// Navigate admin to the game page
-		router.push(`/games/${gameType}?code=${lobby.code}`);
+		router.push(`/games/${gameType}/${code}`);
 	};
 
 	if (loading) return <div className="lobby-container">Loading…</div>;
