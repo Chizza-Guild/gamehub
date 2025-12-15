@@ -54,7 +54,7 @@ function getRandomColor() {
 }
 
 export default function MazeGame() {
-    const { code } = useParams<{ code: string }>();
+	const { code } = useParams<{ code: string }>();
 	const router = useRouter();
 
 	const [loading, setLoading] = useState(true);
@@ -89,9 +89,6 @@ export default function MazeGame() {
 
 		const init = async () => {
 			try {
-				console.log("1. Starting maze initialization");
-
-				// Get player info from localStorage
 				const playerId = localStorage.getItem("playerId");
 				const playerName = localStorage.getItem("playerName");
 
@@ -100,33 +97,21 @@ export default function MazeGame() {
 					router.push("/");
 					return;
 				}
-				console.log("2. Player info retrieved:", { playerId, playerName });
 
 				currentPlayerIdRef.current = playerId;
 				currentPlayerNameRef.current = playerName;
 				playerColorRef.current = getRandomColor();
 
-				// Get lobby info
-				const { data: lobbyData, error: lobbyError } = await supabase.from("lobbies").select("id").eq("code", code).single();
+				const { data: lobbyData, error: lobbyError } = await supabase.from("lobbies").select("id, settings").eq("code", code).single();
 
-				if (lobbyError) {
-					console.error("3a. Lobby query error:", lobbyError);
-					setError(`Lobby error: ${lobbyError.message}`);
-					router.push("/");
-					return;
-				}
-				if (!lobbyData) {
-					console.error("3b. No lobby data returned");
+				if (lobbyError || !lobbyData) {
 					setError("Lobby not found");
 					router.push("/");
 					return;
 				}
-				console.log("3. Lobby data retrieved:", lobbyData);
 
 				setLobbyId(lobbyData.id);
 
-				// Setup Three.js scene
-				console.log("4. Setting up Three.js scene");
 				const scene = new THREE.Scene();
 				scene.background = new THREE.Color(0x0a0a0a);
 				sceneRef.current = scene;
@@ -139,9 +124,7 @@ export default function MazeGame() {
 				renderer.setSize(window.innerWidth, window.innerHeight);
 				document.body.appendChild(renderer.domElement);
 				rendererRef.current = renderer;
-				console.log("5. Three.js scene and renderer created");
 
-				// Lighting
 				const light = new THREE.DirectionalLight(0xffffff, 1);
 				light.position.set(5, 10, 5);
 				scene.add(light);
@@ -149,14 +132,27 @@ export default function MazeGame() {
 				const ambientLight = new THREE.AmbientLight(0x404040, 0.8);
 				scene.add(ambientLight);
 
-				// Floor
 				const floor = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshStandardMaterial({ color: 0x1a1a2e }));
 				floor.rotation.x = -Math.PI / 2;
 				scene.add(floor);
 
-				// Generate maze
-				console.log("6. Generating maze");
-				const layout = generateMaze(20);
+				let layout: string[];
+
+				if (lobbyData.settings?.mazeLayout) {
+					layout = lobbyData.settings.mazeLayout;
+				} else {
+					layout = generateMaze(20);
+					await supabase
+						.from("lobbies")
+						.update({
+							settings: {
+								...lobbyData.settings,
+								mazeLayout: layout,
+							},
+						})
+						.eq("id", lobbyData.id);
+				}
+
 				mazeLayoutRef.current = layout;
 				const walls: THREE.Mesh[] = [];
 				const wallMaterials = [new THREE.MeshStandardMaterial({ color: 0xe53e3e }), new THREE.MeshStandardMaterial({ color: 0x38a169 }), new THREE.MeshStandardMaterial({ color: 0x3182ce })];
@@ -192,10 +188,7 @@ export default function MazeGame() {
 				});
 
 				wallsRef.current = walls;
-				console.log("7. Maze generated with", walls.length, "walls");
 
-				// Insert initial position
-				console.log("8. Inserting initial position");
 				const { error: insertError } = await supabase.from("maze_positions").upsert(
 					{
 						lobby_id: lobbyData.id,
@@ -214,14 +207,10 @@ export default function MazeGame() {
 				);
 
 				if (insertError) {
-					console.error("8a. Insert position error:", insertError);
 					setError(`Position insert error: ${insertError.message}`);
 					return;
 				}
-				console.log("9. Initial position inserted");
 
-				// Setup realtime channel
-				console.log("10. Setting up realtime channel");
 				channelRef.current = supabase
 					.channel(`maze:${lobbyData.id}`)
 					.on(
@@ -236,7 +225,6 @@ export default function MazeGame() {
 							if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
 								const pos = payload.new as PlayerPosition;
 
-								// Don't render our own player
 								if (pos.player_id === currentPlayerIdRef.current) return;
 
 								updatePlayerMesh(pos);
@@ -248,17 +236,7 @@ export default function MazeGame() {
 					)
 					.subscribe();
 
-				console.log("11. Realtime channel subscribed");
-
-				// Load existing players
-				console.log("12. Loading existing players");
 				const { data: existingPlayers, error: playersError } = await supabase.from("maze_positions").select("*").eq("lobby_id", lobbyData.id);
-
-				if (playersError) {
-					console.error("12a. Players query error:", playersError);
-				} else {
-					console.log("13. Existing players loaded:", existingPlayers?.length || 0);
-				}
 
 				if (!playersError && existingPlayers) {
 					existingPlayers.forEach((pos: PlayerPosition) => {
@@ -269,10 +247,8 @@ export default function MazeGame() {
 				}
 
 				if (!mounted) return;
-				console.log("14. Setting loading to false");
 				setLoading(false);
 
-				// Input handling
 				const keys: Record<string, boolean> = {};
 				const onKeyDown = (e: KeyboardEvent) => (keys[e.key] = true);
 				const onKeyUp = (e: KeyboardEvent) => (keys[e.key] = false);
@@ -309,13 +285,11 @@ export default function MazeGame() {
 				function canMove(direction: THREE.Vector3, checkPlayers = true): boolean {
 					raycaster.set(camera.position, direction);
 
-					// Check walls
 					const wallHits = raycaster.intersectObjects(walls);
 					if (wallHits.length > 0 && wallHits[0].distance < 0.6) {
 						return false;
 					}
 
-					// Check other players
 					if (checkPlayers) {
 						const playerMeshes = Array.from(playerMeshesRef.current.values()).map(p => p.mesh);
 						const playerHits = raycaster.intersectObjects(playerMeshes);
@@ -333,12 +307,10 @@ export default function MazeGame() {
 					let playerObj = playerMeshesRef.current.get(pos.player_id);
 
 					if (!playerObj) {
-						// Create new player mesh (ball)
 						const geometry = new THREE.SphereGeometry(0.4, 16, 16);
 						const material = new THREE.MeshStandardMaterial({ color: pos.color });
 						const mesh = new THREE.Mesh(geometry, material);
 
-						// Create label
 						const canvas = document.createElement("canvas");
 						const context = canvas.getContext("2d")!;
 						canvas.width = 256;
@@ -362,7 +334,6 @@ export default function MazeGame() {
 						playerMeshesRef.current.set(pos.player_id, playerObj);
 					}
 
-					// Update position
 					playerObj.mesh.position.set(pos.x, pos.y, pos.z);
 					playerObj.label.position.set(pos.x, pos.y + 1, pos.z);
 				}
@@ -428,26 +399,29 @@ export default function MazeGame() {
 						isJumping = false;
 					}
 
-					// Update position to database (throttled)
 					const now = Date.now();
 					if (now - lastUpdateRef.current > 150) {
 						lastUpdateRef.current = now;
 
-						supabase.from("maze_positions").upsert({
-							lobby_id: lobbyData!.id,
-							player_id: playerId,
-							player_name: playerName,
-							x: camera.position.x,
-							y: camera.position.y,
-							z: camera.position.z,
-							yaw: yaw,
-							pitch: pitch,
-							color: playerColorRef.current,
-							last_updated: new Date().toISOString(),
-						});
+						supabase
+							.from("maze_positions")
+							.upsert({
+								lobby_id: lobbyData!.id,
+								player_id: playerId,
+								player_name: playerName,
+								x: camera.position.x,
+								y: camera.position.y,
+								z: camera.position.z,
+								yaw: yaw,
+								pitch: pitch,
+								color: playerColorRef.current,
+								last_updated: new Date().toISOString(),
+							})
+							.then(({ error }) => {
+								if (error) console.error("Position update error:", error);
+							});
 					}
 
-					// Check win condition
 					if (exitRef.current) {
 						const dx = exitRef.current.position.x - camera.position.x;
 						const dz = exitRef.current.position.z - camera.position.z;
@@ -458,7 +432,6 @@ export default function MazeGame() {
 						}
 					}
 
-					// Make labels face camera
 					playerMeshesRef.current.forEach(playerObj => {
 						playerObj.label.lookAt(camera.position);
 					});
@@ -469,16 +442,13 @@ export default function MazeGame() {
 				async function handleWin() {
 					setWinner(playerName!);
 
-					// Notify all players
 					await supabase.from("lobby_messages").insert({
 						lobby_id: lobbyData!.id,
 						message: `${playerName} won the maze!`,
 						is_system: true,
 					});
 
-					// Wait 3 seconds then return to lobby
 					setTimeout(async () => {
-						// Clean up our position
 						await supabase.from("maze_positions").delete().eq("lobby_id", lobbyData!.id).eq("player_id", playerId);
 
 						router.push(`/lobby/${code}`);
@@ -487,7 +457,6 @@ export default function MazeGame() {
 
 				animate();
 
-				// Cleanup
 				return () => {
 					mounted = false;
 					cancelAnimationFrame(animationId);
@@ -508,13 +477,11 @@ export default function MazeGame() {
 						rendererRef.current = null;
 					}
 
-					// Clean up our position from database
 					if (lobbyId && currentPlayerIdRef.current) {
 						supabase.from("maze_positions").delete().eq("lobby_id", lobbyId).eq("player_id", currentPlayerIdRef.current);
 					}
 				};
 			} catch (err) {
-				console.error("CAUGHT ERROR:", err);
 				if (mounted) {
 					const errorMsg = err instanceof Error ? err.message : String(err);
 					setError(`Exception: ${errorMsg}`);

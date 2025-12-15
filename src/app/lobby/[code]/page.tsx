@@ -18,6 +18,7 @@ type Player = {
 type LobbySettings = {
 	maxPlayers: number;
 	isPrivate: boolean;
+	mazeLayout?: string[];
 };
 
 type Lobby = {
@@ -81,12 +82,10 @@ export default function LobbyPage() {
 	const handleMaxPlayersChange = (value: number) => {
 		setMaxPlayers(value);
 
-		// Clear existing timeout
 		if (maxPlayersDebounceRef.current) {
 			clearTimeout(maxPlayersDebounceRef.current);
 		}
 
-		// Set new timeout to update database
 		maxPlayersDebounceRef.current = setTimeout(async () => {
 			if (!lobby) return;
 
@@ -100,7 +99,6 @@ export default function LobbyPage() {
 				})
 				.eq("id", lobby.id);
 
-			// Update local state
 			setLobby(prev => {
 				if (!prev) return prev;
 				return {
@@ -111,7 +109,7 @@ export default function LobbyPage() {
 					},
 				};
 			});
-		}, 500); // 500ms debounce
+		}, 500);
 	};
 
 	useEffect(() => {
@@ -167,7 +165,6 @@ export default function LobbyPage() {
 
 			setMessages(messagesData || []);
 
-			// Set up channels FIRST
 			lobbyChannel.current = supabase
 				.channel(`lobby:${lobbyData.id}`)
 				.on(
@@ -186,7 +183,6 @@ export default function LobbyPage() {
 				)
 				.subscribe();
 
-			// Set up messages channel and wait for it to be subscribed
 			messagesChannel.current = supabase
 				.channel(`messages:${lobbyData.id}`)
 				.on(
@@ -201,7 +197,6 @@ export default function LobbyPage() {
 						const newMessage = payload.new as Message;
 						setMessages(prev => [...prev, newMessage].slice(-200));
 
-						// Check if this is a game start message
 						if (newMessage.is_system && newMessage.message.startsWith("GAME_START:")) {
 							const gameType = newMessage.message.replace("GAME_START:", "");
 							router.push(`/games/${gameType}/${code}`);
@@ -209,7 +204,6 @@ export default function LobbyPage() {
 					}
 				)
 				.subscribe(async status => {
-					// Only send join message when channel is successfully subscribed
 					if (status === "SUBSCRIBED") {
 						await supabase.from("lobby_messages").insert({
 							lobby_id: lobbyData.id,
@@ -314,17 +308,14 @@ export default function LobbyPage() {
 	const handleStartGame = async () => {
 		if (!lobby || !gameType || !isAdmin) return;
 
-		// Create a game start message in the database that all clients will see
 		await supabase.from("lobby_messages").insert({
 			lobby_id: lobby.id,
 			message: `GAME_START:${gameType}`,
 			is_system: true,
 		});
 
-		// Update lobby with selected game type
 		await supabase.from("lobbies").update({ game_type: gameType }).eq("id", lobby.id);
 
-		// Navigate admin to the game page
 		router.push(`/games/${gameType}/${code}`);
 	};
 
