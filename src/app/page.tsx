@@ -174,7 +174,7 @@ export default function Home() {
 			<h2 className="text-2xl font-bold mb-4">Quick Play Games</h2>
 			<div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-4xl">
 				<Link href="/games/tictactoe" className="p-6 bg-gray-800 rounded-lg">
-					🎮 TicTacToe
+					🎮 Tic Tac Toe
 				</Link>
 			</div>
 		</div>

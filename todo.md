@@ -1,14 +1,13 @@
 # TODO
 ## Current Stuff
-- Fix admin not transferring when the current admin leaves (??? does this work)
 - Add Kick button for admins which should return the player to main menu
 - Remove unnecessary files to clean up code
 - Add private lobby option
 - Fix the mouse request thingy on other pages
 - Fix join lobby not appearing in localhost
-- Make multiplayer maze work
 - Add map sizes as lobby options (maze)
-- Test if lobby join cap works
+- Lobby player cap doesnt work
+- Add selectable profile pictures using supabase bucket
 - Start doing ruined & unruined for chizza party
 
 ## Future Ideas
