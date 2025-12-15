@@ -1,29 +1,27 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef, Suspense } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { supabase, getPlayerId, getPlayerName, type Inserts, type Updates } from '@/lib/supabase/client';
 import { useGameSession } from '@/hooks/useGameSession';
 import { useAudioEngine } from '@/hooks/useAudioEngine';
 import { SyncManager } from '@/lib/multiplayer/SyncManager';
 import { RealtimeManager } from '@/lib/supabase/realtime';
-import { RhythmLane } from './components/RhythmLane';
-import { ScoreDisplay } from './components/ScoreDisplay';
-import { Countdown } from './components/Countdown';
-import { generateTestChart } from './lib/notePatterns';
+import { RhythmLane } from '../components/RhythmLane';
+import { ScoreDisplay } from '../components/ScoreDisplay';
+import { Countdown } from '../components/Countdown';
+import { generateTestChart } from '../lib/notePatterns';
 import {
   calculateJudgement,
   calculateHitScore,
   calculateAccuracy,
-} from './lib/scoring';
-import { GAME_CONFIG } from './lib/constants';
-import type { NoteChart, PlayerScore, NoteType } from './types';
+} from '../lib/scoring';
+import { GAME_CONFIG } from '../lib/constants';
+import type { NoteChart, PlayerScore, NoteType } from '../types';
 
 function DodoReMiGameContent() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const lobbyCode = searchParams.get('code');
-
+  const { lobbyCode } = useParams<{ lobbyCode: string }>();
   const [gamePhase, setGamePhase] = useState<
     'lobby' | 'countdown' | 'playing' | 'results'
   >('countdown');
