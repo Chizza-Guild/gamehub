@@ -342,8 +342,8 @@ export default function MazeGame() {
 				let velocity = 0;
 				let isJumping = false;
 				let isCrouching = false;
-				const gravity = -0.01;
-				const jumpStrength = 0.15;
+				const gravity = -0.005;
+				const jumpStrength = 0.25;
 				const groundLevel = 1.6;
 				const crouchLevel = 1.2;
 
@@ -442,11 +442,11 @@ export default function MazeGame() {
 					const right = new THREE.Vector3();
 					right.crossVectors(forward, new THREE.Vector3(0, 1, 0));
 
-					let speed = 0.05;
+					let speed = 0.07;
 					let targetHeight = groundLevel;
 
 					if (keys["Shift"]) {
-						speed = 0.18;
+						speed = 0.14;
 					}
 
 					if (keys["Control"]) {
@@ -482,7 +482,7 @@ export default function MazeGame() {
 					}
 
 					const now = Date.now();
-					if (now - lastUpdateRef.current > 150) {
+					if (now - lastUpdateRef.current > 50) {
 						lastUpdateRef.current = now;
 
 						const updateData = {
