@@ -413,10 +413,8 @@ export default function LobbyPage() {
 									<select value={gameType} onChange={e => setGameType(e.target.value)} className="form-select">
 										<option value="">Select a game...</option>
 										<option value="dance">Dance</option>
-										<option value="trivia">Trivia</option>
-										<option value="drawing">Drawing</option>
-										<option value="word_game">Word Game</option>
-										<option value="cards">Card Game</option>
+										<option value="tictactoe">Tic Tac Toe</option>
+										<option value="maze">Maze</option>
 									</select>
 								</div>
 
