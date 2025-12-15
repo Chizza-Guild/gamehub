@@ -173,18 +173,8 @@ export default function Home() {
 
 			<h2 className="text-2xl font-bold mb-4">Quick Play Games</h2>
 			<div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-4xl">
-				<Link href="/games/maze" className="p-6 bg-gray-800 rounded-lg">
-					🎮 Maze
-				</Link>
-				<Link href="/games/dance" className="p-6 bg-gray-800 rounded-lg">
-					🎵 Dodo Re Mi
-				</Link>
-				<Link href="/games/ruined" className="p-6 bg-gray-800 rounded-lg">
-					🎮 Ruin & Unruin
-				</Link>
-				<Link href="/games/tictactoe" className="p-6 bg-gray-800 hover:bg-gray-700 rounded-lg border-2 border-gray-700 hover:border-blue-500 transition">
-					<h2 className="text-2xl font-bold mb-2">🎮 TicTacToe</h2>
-					<p className="text-gray-400">Its TicTacToe :D</p>
+				<Link href="/games/tictactoe" className="p-6 bg-gray-800 rounded-lg">
+					🎮 TicTacToe
 				</Link>
 			</div>
 		</div>
