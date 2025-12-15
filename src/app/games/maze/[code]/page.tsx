@@ -342,7 +342,7 @@ export default function MazeGame() {
 				let velocity = 0;
 				let isJumping = false;
 				let isCrouching = false;
-				const gravity = -0.005;
+				const gravity = -0.01;
 				const jumpStrength = 0.25;
 				const groundLevel = 1.6;
 				const crouchLevel = 1.2;
