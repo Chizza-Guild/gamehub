@@ -18,8 +18,14 @@ type PlayerPosition = {
 
 function generateMaze(size: number) {
 	const maze = Array.from({ length: size }, () => Array(size).fill("#"));
+	const dirs = [
+		[0, -2],
+		[2, 0],
+		[0, 2],
+		[-2, 0],
+	];
 
-	function shuffle(arr: number[]) {
+	function shuffle(arr: number[][]) {
 		for (let i = arr.length - 1; i > 0; i--) {
 			const j = Math.floor(Math.random() * (i + 1));
 			[arr[i], arr[j]] = [arr[j], arr[i]];
@@ -29,9 +35,7 @@ function generateMaze(size: number) {
 
 	function carve(x: number, y: number) {
 		maze[y][x] = " ";
-		shuffle([0, 1, 2, 3]).forEach(d => {
-			const dx = [0, 2, 0, -2][d];
-			const dy = [-2, 0, 2, 0][d];
+		shuffle(dirs.slice()).forEach(([dx, dy]) => {
 			const nx = x + dx;
 			const ny = y + dy;
 			if (nx > 0 && ny > 0 && nx < size - 1 && ny < size - 1 && maze[ny][nx] === "#") {
@@ -42,8 +46,37 @@ function generateMaze(size: number) {
 	}
 
 	carve(1, 1);
+
+	const queue: [number, number][] = [[1, 1]];
+	const dist = Array.from({ length: size }, () => Array(size).fill(-1));
+	dist[1][1] = 0;
+
+	let fx = 1;
+	let fy = 1;
+
+	while (queue.length) {
+		const [x, y] = queue.shift()!;
+		if (dist[y][x] > dist[fy][fx]) {
+			fx = x;
+			fy = y;
+		}
+		for (const [dx, dy] of [
+			[1, 0],
+			[-1, 0],
+			[0, 1],
+			[0, -1],
+		]) {
+			const nx = x + dx;
+			const ny = y + dy;
+			if (maze[ny]?.[nx] === " " && dist[ny][nx] === -1) {
+				dist[ny][nx] = dist[y][x] + 1;
+				queue.push([nx, ny]);
+			}
+		}
+	}
+
 	maze[1][1] = "S";
-	maze[size - 2][size - 2] = "E";
+	maze[fy][fx] = "E";
 
 	return maze.map(r => r.join(""));
 }
@@ -152,7 +185,7 @@ export default function MazeGame() {
 									table: "lobbies",
 									filter: `id=eq.${lobbyData.id}`,
 								},
-								async payload => {
+								payload => {
 									const newSettings = (payload.new as any).settings;
 									if (newSettings?.mazeLayout) {
 										setWaitingForMaze(false);
@@ -161,7 +194,17 @@ export default function MazeGame() {
 									}
 								}
 							)
-							.subscribe();
+							.subscribe(async status => {
+								if (status === "SUBSCRIBED") {
+									const { data } = await supabase.from("lobbies").select("settings").eq("id", lobbyData.id).single();
+
+									if (data?.settings?.mazeLayout) {
+										setWaitingForMaze(false);
+										lobbyChannelRef.current?.unsubscribe();
+										init();
+									}
+								}
+							});
 
 						return;
 					}
