@@ -3,6 +3,38 @@
 import { useEffect } from "react";
 import * as THREE from "three";
 
+function generateMaze(size: number) {
+	const maze = Array.from({ length: size }, () => Array(size).fill("#"));
+
+	function shuffle(arr: number[]) {
+		for (let i = arr.length - 1; i > 0; i--) {
+			const j = Math.floor(Math.random() * (i + 1));
+			[arr[i], arr[j]] = [arr[j], arr[i]];
+		}
+		return arr;
+	}
+
+	function carve(x: number, y: number) {
+		maze[y][x] = " ";
+		shuffle([0, 1, 2, 3]).forEach(d => {
+			const dx = [0, 2, 0, -2][d];
+			const dy = [-2, 0, 2, 0][d];
+			const nx = x + dx;
+			const ny = y + dy;
+			if (nx > 0 && ny > 0 && nx < size - 1 && ny < size - 1 && maze[ny][nx] === "#") {
+				maze[y + dy / 2][x + dx / 2] = " ";
+				carve(nx, ny);
+			}
+		});
+	}
+
+	carve(1, 1);
+	maze[1][1] = "S";
+	maze[size - 2][size - 2] = "E";
+
+	return maze.map(r => r.join(""));
+}
+
 export default function Page() {
 	useEffect(() => {
 		const scene = new THREE.Scene();
@@ -28,8 +60,7 @@ export default function Page() {
 		const walls: THREE.Mesh[] = [];
 		const wallMaterials = [new THREE.MeshStandardMaterial({ color: 0xe53e3e }), new THREE.MeshStandardMaterial({ color: 0x38a169 }), new THREE.MeshStandardMaterial({ color: 0x3182ce })];
 
-		const layout = ["################", "################", "##S          ####", "##            ###", "##  ######  ## ##", "##  ######  ## ##", "##      ##     ##", "##      ##     ##", "######  ########", "######  ########", "######  ########", "######  ########", "##            ###", "##            ###", "##  ############", "##          E####", "################", "################"];
-
+		const layout = generateMaze(20);
 		let exit: THREE.Mesh | null = null;
 
 		layout.forEach((row, z) => {
