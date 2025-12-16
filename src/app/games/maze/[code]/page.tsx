@@ -103,7 +103,7 @@ export default function MazeGame() {
 	const exitRef = useRef<THREE.Mesh | null>(null);
 	const wallsRef = useRef<THREE.Mesh[]>([]);
 	const mazeLayoutRef = useRef<string[]>([]);
-	const spawnPosRef = useRef<{ x: number; z: number }>({ x: 2, z: 2 });
+	const spawnPosRef = useRef<{ x: number; z: number }>({ x: 3, z: 3 });
 
 	const currentPlayerIdRef = useRef<string | null>(null);
 	const currentPlayerNameRef = useRef<string | null>(null);
@@ -111,6 +111,8 @@ export default function MazeGame() {
 	const lastUpdateRef = useRef<number>(0);
 	const channelRef = useRef<any>(null);
 	const lobbyChannelRef = useRef<any>(null);
+	const hasWonRef = useRef<boolean>(false);
+	const winChannelRef = useRef<any>(null);
 
 	useEffect(() => {
 		if (!code) {
@@ -212,6 +214,10 @@ export default function MazeGame() {
 
 				const scene = new THREE.Scene();
 				scene.background = new THREE.Color(0x0a0a0a);
+
+				// Add fog
+				scene.fog = new THREE.Fog(0x0a0a0a, 10, 50);
+
 				sceneRef.current = scene;
 
 				const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -230,26 +236,29 @@ export default function MazeGame() {
 				const ambientLight = new THREE.AmbientLight(0x404040, 0.8);
 				scene.add(ambientLight);
 
-				const floor = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshStandardMaterial({ color: 0x1a1a2e }));
+				const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: 0x1a1a2e }));
 				floor.rotation.x = -Math.PI / 2;
 				scene.add(floor);
 
 				mazeLayoutRef.current = layout;
 				const walls: THREE.Mesh[] = [];
+
+				// Use instanced mesh for better performance
+				const wallGeometry = new THREE.BoxGeometry(3, 3, 3);
 				const wallMaterials = [new THREE.MeshStandardMaterial({ color: 0xe53e3e }), new THREE.MeshStandardMaterial({ color: 0x38a169 }), new THREE.MeshStandardMaterial({ color: 0x3182ce })];
 
 				layout.forEach((row, z) => {
 					row.split("").forEach((cell, x) => {
 						if (cell === "#") {
-							const wall = new THREE.Mesh(new THREE.BoxGeometry(2, 3, 2), wallMaterials[Math.floor(Math.random() * wallMaterials.length)]);
-							wall.position.set(x * 2, 1.5, z * 2);
+							const wall = new THREE.Mesh(wallGeometry, wallMaterials[Math.floor(Math.random() * wallMaterials.length)]);
+							wall.position.set(x * 3, 1.5, z * 3);
 							scene.add(wall);
 							walls.push(wall);
 						}
 
 						if (cell === "S") {
-							spawnPosRef.current = { x: x * 2, z: z * 2 };
-							camera.position.set(x * 2, 1.6, z * 2);
+							spawnPosRef.current = { x: x * 3, z: z * 3 };
+							camera.position.set(x * 3, 1.6, z * 3);
 						}
 
 						if (cell === "E") {
@@ -261,7 +270,7 @@ export default function MazeGame() {
 									emissiveIntensity: 0.5,
 								})
 							);
-							exit.position.set(x * 2, 0.75, z * 2);
+							exit.position.set(x * 3, 0.75, z * 3);
 							scene.add(exit);
 							exitRef.current = exit;
 						}
@@ -269,6 +278,35 @@ export default function MazeGame() {
 				});
 
 				wallsRef.current = walls;
+
+				// Subscribe to win events to sync winner state
+				winChannelRef.current = supabase
+					.channel(`maze-wins:${lobbyData.id}`)
+					.on(
+						"postgres_changes",
+						{
+							event: "INSERT",
+							schema: "public",
+							table: "lobby_messages",
+							filter: `lobby_id=eq.${lobbyData.id}`,
+						},
+						payload => {
+							const message = (payload.new as any).message;
+							if (message && message.includes("won the maze!")) {
+								const winnerName = message.split(" won the maze!")[0];
+								if (!hasWonRef.current) {
+									setWinner(winnerName);
+
+									// Return to lobby after delay
+									setTimeout(async () => {
+										await supabase.from("maze_positions").delete().eq("lobby_id", lobbyData.id).eq("player_id", playerId);
+										router.push(`/lobby/${code}`);
+									}, 3000);
+								}
+							}
+						}
+					)
+					.subscribe();
 
 				const { error: insertError } = await supabase.from("maze_positions").upsert(
 					{
@@ -346,6 +384,7 @@ export default function MazeGame() {
 				const jumpStrength = 0.15;
 				const groundLevel = 1.6;
 				const crouchLevel = 1.2;
+				const playerRadius = 0.4;
 
 				document.body.addEventListener("click", () => {
 					document.body.requestPointerLock();
@@ -362,21 +401,28 @@ export default function MazeGame() {
 				};
 				document.addEventListener("mousemove", onMouseMove);
 
-				const raycaster = new THREE.Raycaster();
+				// Improved collision detection with cylinder check
+				function canMove(newPos: THREE.Vector3): boolean {
+					// Check multiple points around the player in a cylinder
+					const checkPoints = [new THREE.Vector3(0, 0, 0), new THREE.Vector3(playerRadius, 0, 0), new THREE.Vector3(-playerRadius, 0, 0), new THREE.Vector3(0, 0, playerRadius), new THREE.Vector3(0, 0, -playerRadius), new THREE.Vector3(playerRadius * 0.7, 0, playerRadius * 0.7), new THREE.Vector3(-playerRadius * 0.7, 0, playerRadius * 0.7), new THREE.Vector3(playerRadius * 0.7, 0, -playerRadius * 0.7), new THREE.Vector3(-playerRadius * 0.7, 0, -playerRadius * 0.7)];
 
-				function canMove(direction: THREE.Vector3, checkPlayers = true): boolean {
-					raycaster.set(camera.position, direction);
+					for (const offset of checkPoints) {
+						const checkPos = newPos.clone().add(offset);
 
-					const wallHits = raycaster.intersectObjects(walls);
-					if (wallHits.length > 0 && wallHits[0].distance < 0.6) {
-						return false;
-					}
+						// Check against walls using bounding boxes
+						for (const wall of walls) {
+							const wallBox = new THREE.Box3().setFromObject(wall);
+							const playerPoint = new THREE.Vector3(checkPos.x, camera.position.y, checkPos.z);
 
-					if (checkPlayers) {
-						const playerMeshes = Array.from(playerMeshesRef.current.values()).map(p => p.mesh);
-						const playerHits = raycaster.intersectObjects(playerMeshes);
-						if (playerHits.length > 0 && playerHits[0].distance < 1.0) {
-							return false;
+							if (wallBox.containsPoint(playerPoint)) {
+								return false;
+							}
+
+							// Also check slightly expanded box for smoother collision
+							const expandedBox = wallBox.clone().expandByScalar(0.3);
+							if (expandedBox.containsPoint(playerPoint)) {
+								return false;
+							}
 						}
 					}
 
@@ -442,17 +488,17 @@ export default function MazeGame() {
 					const right = new THREE.Vector3();
 					right.crossVectors(forward, new THREE.Vector3(0, 1, 0));
 
-					let speed = 0.07;
+					let speed = 0.1;
 					let targetHeight = groundLevel;
 
 					if (keys["Shift"]) {
-						speed = 0.14;
+						speed = 0.2;
 					}
 
 					if (keys["Control"]) {
 						isCrouching = true;
 						targetHeight = crouchLevel;
-						speed = 0.03;
+						speed = 0.05;
 					} else {
 						isCrouching = false;
 					}
@@ -461,10 +507,23 @@ export default function MazeGame() {
 						camera.position.y += (targetHeight - camera.position.y) * 0.2;
 					}
 
-					if (keys["w"] && canMove(forward)) camera.position.addScaledVector(forward, speed);
-					if (keys["s"] && canMove(forward.clone().negate())) camera.position.addScaledVector(forward, -speed);
-					if (keys["a"] && canMove(right.clone().negate())) camera.position.addScaledVector(right, -speed);
-					if (keys["d"] && canMove(right)) camera.position.addScaledVector(right, speed);
+					// Movement with improved collision detection
+					if (keys["w"]) {
+						const newPos = camera.position.clone().addScaledVector(forward, speed);
+						if (canMove(newPos)) camera.position.copy(newPos);
+					}
+					if (keys["s"]) {
+						const newPos = camera.position.clone().addScaledVector(forward, -speed);
+						if (canMove(newPos)) camera.position.copy(newPos);
+					}
+					if (keys["a"]) {
+						const newPos = camera.position.clone().addScaledVector(right, -speed);
+						if (canMove(newPos)) camera.position.copy(newPos);
+					}
+					if (keys["d"]) {
+						const newPos = camera.position.clone().addScaledVector(right, speed);
+						if (canMove(newPos)) camera.position.copy(newPos);
+					}
 
 					if (keys[" "] && !isJumping) {
 						velocity = jumpStrength;
@@ -482,43 +541,32 @@ export default function MazeGame() {
 					}
 
 					const now = Date.now();
-					if (now - lastUpdateRef.current > 50) {
+					if (now - lastUpdateRef.current > 50 && !hasWonRef.current) {
 						lastUpdateRef.current = now;
 
-						const updateData = {
-							lobby_id: lobbyData!.id,
-							player_id: playerId,
-							player_name: playerName,
-							x: camera.position.x,
-							y: camera.position.y,
-							z: camera.position.z,
-							yaw: yaw,
-							pitch: pitch,
-							color: playerColorRef.current,
-							last_updated: new Date().toISOString(),
-						};
-
-						console.log("Sending position update:", updateData);
-
-						supabase
-							.from("maze_positions")
-							.upsert(updateData, { onConflict: "lobby_id,player_id" })
-							.then(({ data, error }) => {
-								if (error) {
-									console.error("Position update error:", error);
-									console.error("Error details:", JSON.stringify(error, null, 2));
-								} else {
-									console.log("Position update success:", data);
-								}
-							});
+						supabase.from("maze_positions").upsert(
+							{
+								lobby_id: lobbyData!.id,
+								player_id: playerId,
+								player_name: playerName,
+								x: camera.position.x,
+								y: camera.position.y,
+								z: camera.position.z,
+								yaw: yaw,
+								pitch: pitch,
+								color: playerColorRef.current,
+								last_updated: new Date().toISOString(),
+							},
+							{ onConflict: "lobby_id,player_id" }
+						);
 					}
 
-					if (exitRef.current) {
+					if (exitRef.current && !hasWonRef.current) {
 						const dx = exitRef.current.position.x - camera.position.x;
 						const dz = exitRef.current.position.z - camera.position.z;
 						const distance = Math.sqrt(dx * dx + dz * dz);
 
-						if (distance < 2.5 && !winner) {
+						if (distance < 2.5) {
 							handleWin();
 						}
 					}
@@ -531,17 +579,21 @@ export default function MazeGame() {
 				}
 
 				async function handleWin() {
+					if (hasWonRef.current) return;
+					hasWonRef.current = true;
+
 					setWinner(playerName!);
 
+					// Send win message only once
 					await supabase.from("lobby_messages").insert({
 						lobby_id: lobbyData!.id,
 						message: `${playerName} won the maze!`,
 						is_system: true,
 					});
 
+					// Delete position and return to lobby
 					setTimeout(async () => {
 						await supabase.from("maze_positions").delete().eq("lobby_id", lobbyData!.id).eq("player_id", playerId);
-
 						router.push(`/lobby/${code}`);
 					}, 3000);
 				}
@@ -560,6 +612,10 @@ export default function MazeGame() {
 						channelRef.current.unsubscribe();
 					}
 
+					if (winChannelRef.current) {
+						winChannelRef.current.unsubscribe();
+					}
+
 					if (rendererRef.current?.domElement?.parentNode) {
 						rendererRef.current.domElement.parentNode.removeChild(rendererRef.current.domElement);
 					}
@@ -568,7 +624,7 @@ export default function MazeGame() {
 						rendererRef.current = null;
 					}
 
-					if (lobbyId && currentPlayerIdRef.current) {
+					if (lobbyId && currentPlayerIdRef.current && !hasWonRef.current) {
 						supabase.from("maze_positions").delete().eq("lobby_id", lobbyId).eq("player_id", currentPlayerIdRef.current);
 					}
 				};
