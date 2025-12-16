@@ -5,6 +5,7 @@
 - Add private lobby option
 - Fix the mouse request thingy on other pages
 - Fix join lobby not appearing in localhost
+- Fix game ending being glitchy in maze
 - Add map sizes as lobby options (maze)
 - Lobby player cap doesnt work
 - Add selectable profile pictures using supabase bucket
