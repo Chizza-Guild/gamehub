@@ -104,6 +104,7 @@ export default function MazeGame() {
 	const wallsRef = useRef<THREE.Mesh[]>([]);
 	const mazeLayoutRef = useRef<string[]>([]);
 	const spawnPosRef = useRef<{ x: number; z: number }>({ x: 2, z: 2 });
+	const playerLightRef = useRef<THREE.PointLight | null>(null);
 
 	const currentPlayerIdRef = useRef<string | null>(null);
 	const currentPlayerNameRef = useRef<string | null>(null);
@@ -111,8 +112,8 @@ export default function MazeGame() {
 	const lastUpdateRef = useRef<number>(0);
 	const channelRef = useRef<any>(null);
 	const lobbyChannelRef = useRef<any>(null);
-	const hasWonRef = useRef<boolean>(false);
-	const isTransitioningRef = useRef<boolean>(false);
+	const messagesChannelRef = useRef<any>(null);
+	const gameEndedRef = useRef<boolean>(false);
 
 	useEffect(() => {
 		if (!code) {
@@ -148,6 +149,16 @@ export default function MazeGame() {
 				}
 
 				setLobbyId(lobbyData.id);
+
+				const { data: messages } = await supabase.from("lobby_messages").select("message").eq("lobby_id", lobbyData.id).eq("is_system", true).like("message", "% won the maze!").order("created_at", { ascending: false }).limit(1);
+
+				if (messages && messages.length > 0) {
+					const winnerName = messages[0].message.replace(" won the maze!", "");
+					setWinner(winnerName);
+					gameEndedRef.current = true;
+					setTimeout(() => router.push(`/lobby/${code}`), 3000);
+					return;
+				}
 
 				const { data: playerData } = await supabase.from("lobby_players").select("is_admin").eq("lobby_id", lobbyData.id).eq("player_id", playerId).single();
 
@@ -214,6 +225,7 @@ export default function MazeGame() {
 
 				const scene = new THREE.Scene();
 				scene.background = new THREE.Color(0x0a0a0a);
+				scene.fog = new THREE.Fog(0x0a0a0a, 1, 25);
 				sceneRef.current = scene;
 
 				const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -225,11 +237,12 @@ export default function MazeGame() {
 				document.body.appendChild(renderer.domElement);
 				rendererRef.current = renderer;
 
-				const light = new THREE.DirectionalLight(0xffffff, 1);
-				light.position.set(5, 10, 5);
-				scene.add(light);
+				const playerLight = new THREE.PointLight(0xffffff, 1.5, 20, 2);
+				playerLight.position.copy(camera.position);
+				scene.add(playerLight);
+				playerLightRef.current = playerLight;
 
-				const ambientLight = new THREE.AmbientLight(0x404040, 0.8);
+				const ambientLight = new THREE.AmbientLight(0x404040, 0.3);
 				scene.add(ambientLight);
 
 				const floor = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshStandardMaterial({ color: 0x1a1a2e }));
@@ -247,6 +260,11 @@ export default function MazeGame() {
 							wall.position.set(x * 2, 1.5, z * 2);
 							scene.add(wall);
 							walls.push(wall);
+
+							// Add roof on top of walls
+							const roof = new THREE.Mesh(new THREE.BoxGeometry(2, 0.2, 2), new THREE.MeshStandardMaterial({ color: 0x2d2d2d }));
+							roof.position.set(x * 2, 3.1, z * 2);
+							scene.add(roof);
 						}
 
 						if (cell === "S") {
@@ -294,6 +312,33 @@ export default function MazeGame() {
 					setError(`Position insert error: ${insertError.message}`);
 					return;
 				}
+
+				messagesChannelRef.current = supabase
+					.channel(`lobby-messages:${lobbyData.id}`)
+					.on(
+						"postgres_changes",
+						{
+							event: "INSERT",
+							schema: "public",
+							table: "lobby_messages",
+							filter: `lobby_id=eq.${lobbyData.id}`,
+						},
+						payload => {
+							const message = payload.new as any;
+							if (message.is_system && message.message.includes("won the maze!")) {
+								const winnerName = message.message.replace(" won the maze!", "");
+								if (!gameEndedRef.current) {
+									gameEndedRef.current = true;
+									setWinner(winnerName);
+									setTimeout(async () => {
+										await supabase.from("maze_positions").delete().eq("lobby_id", lobbyData.id).eq("player_id", playerId);
+										router.push(`/lobby/${code}`);
+									}, 3000);
+								}
+							}
+						}
+					)
+					.subscribe();
 
 				channelRef.current = supabase
 					.channel(`maze:${lobbyData.id}`)
@@ -349,9 +394,8 @@ export default function MazeGame() {
 				const groundLevel = 1.6;
 				const crouchLevel = 1.2;
 
-				// Smooth movement variables
 				const targetPosition = new THREE.Vector3(camera.position.x, camera.position.y, camera.position.z);
-				const smoothingFactor = 0.3; // Higher = more responsive, lower = smoother
+				const smoothingFactor = 0.3;
 
 				document.body.addEventListener("click", () => {
 					document.body.requestPointerLock();
@@ -370,23 +414,45 @@ export default function MazeGame() {
 
 				const raycaster = new THREE.Raycaster();
 
-				function canMove(direction: THREE.Vector3, checkPlayers = true): boolean {
-					raycaster.set(camera.position, direction);
+				function canMove(newPos: THREE.Vector3, moveDir: THREE.Vector3): { canMove: boolean; slideVector: THREE.Vector3 | null } {
+					const directions = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1), new THREE.Vector3(0.707, 0, 0.707), new THREE.Vector3(-0.707, 0, 0.707), new THREE.Vector3(0.707, 0, -0.707), new THREE.Vector3(-0.707, 0, -0.707)];
 
-					const wallHits = raycaster.intersectObjects(walls);
-					if (wallHits.length > 0 && wallHits[0].distance < 0.6) {
-						return false;
-					}
+					const radius = 0.5;
+					let closestHit = null;
+					let minDistance = Infinity;
 
-					if (checkPlayers) {
-						const playerMeshes = Array.from(playerMeshesRef.current.values()).map(p => p.mesh);
-						const playerHits = raycaster.intersectObjects(playerMeshes);
-						if (playerHits.length > 0 && playerHits[0].distance < 1.0) {
-							return false;
+					for (const dir of directions) {
+						raycaster.set(newPos, dir);
+						const wallHits = raycaster.intersectObjects(walls);
+						if (wallHits.length > 0 && wallHits[0].distance < radius) {
+							if (wallHits[0].distance < minDistance) {
+								minDistance = wallHits[0].distance;
+								closestHit = { point: wallHits[0].point, normal: wallHits[0].face?.normal, object: wallHits[0].object };
+							}
 						}
 					}
 
-					return true;
+					const playerMeshes = Array.from(playerMeshesRef.current.values()).map(p => p.mesh);
+					for (const dir of directions) {
+						raycaster.set(newPos, dir);
+						const playerHits = raycaster.intersectObjects(playerMeshes);
+						if (playerHits.length > 0 && playerHits[0].distance < 0.8) {
+							return { canMove: false, slideVector: null };
+						}
+					}
+
+					if (closestHit && closestHit.normal) {
+						const worldNormal = closestHit.normal.clone();
+						closestHit.object.getWorldQuaternion(new THREE.Quaternion()).normalize();
+
+						const dot = moveDir.dot(worldNormal);
+						const slideVector = moveDir.clone().sub(worldNormal.multiplyScalar(dot));
+						slideVector.normalize();
+
+						return { canMove: false, slideVector };
+					}
+
+					return { canMove: true, slideVector: null };
 				}
 
 				function updatePlayerMesh(pos: PlayerPosition) {
@@ -425,7 +491,6 @@ export default function MazeGame() {
 						playerObj = { mesh, label, targetPos };
 						playerMeshesRef.current.set(pos.player_id, playerObj);
 					} else {
-						// Update target position for smooth interpolation
 						playerObj.targetPos.set(pos.x, pos.y, pos.z);
 					}
 				}
@@ -440,7 +505,7 @@ export default function MazeGame() {
 				}
 
 				function animate() {
-					if (!mounted || hasWonRef.current) return;
+					if (!mounted || gameEndedRef.current) return;
 
 					animationId = requestAnimationFrame(animate);
 
@@ -471,11 +536,68 @@ export default function MazeGame() {
 						targetPosition.y += (targetHeight - targetPosition.y) * 0.2;
 					}
 
-					// Update target position based on input
-					if (keys["w"] && canMove(forward)) targetPosition.addScaledVector(forward, speed);
-					if (keys["s"] && canMove(forward.clone().negate())) targetPosition.addScaledVector(forward, -speed);
-					if (keys["a"] && canMove(right.clone().negate())) targetPosition.addScaledVector(right, -speed);
-					if (keys["d"] && canMove(right)) targetPosition.addScaledVector(right, speed);
+					const newPos = targetPosition.clone();
+
+					if (keys["w"]) {
+						newPos.addScaledVector(forward, speed);
+						const moveCheck = canMove(newPos, forward);
+						if (moveCheck.canMove) {
+							targetPosition.copy(newPos);
+						} else if (moveCheck.slideVector) {
+							newPos.copy(targetPosition);
+							newPos.addScaledVector(moveCheck.slideVector, speed * 0.5);
+							const slideCheck = canMove(newPos, moveCheck.slideVector);
+							if (slideCheck.canMove) {
+								targetPosition.copy(newPos);
+							}
+						}
+					}
+					if (keys["s"]) {
+						newPos.copy(targetPosition);
+						const backwardDir = forward.clone().negate();
+						newPos.addScaledVector(forward, -speed);
+						const moveCheck = canMove(newPos, backwardDir);
+						if (moveCheck.canMove) {
+							targetPosition.copy(newPos);
+						} else if (moveCheck.slideVector) {
+							newPos.copy(targetPosition);
+							newPos.addScaledVector(moveCheck.slideVector, speed * 0.5);
+							const slideCheck = canMove(newPos, moveCheck.slideVector);
+							if (slideCheck.canMove) {
+								targetPosition.copy(newPos);
+							}
+						}
+					}
+					if (keys["a"]) {
+						newPos.copy(targetPosition);
+						newPos.addScaledVector(right, -speed);
+						const moveCheck = canMove(newPos, right.clone().negate());
+						if (moveCheck.canMove) {
+							targetPosition.copy(newPos);
+						} else if (moveCheck.slideVector) {
+							newPos.copy(targetPosition);
+							newPos.addScaledVector(moveCheck.slideVector, speed * 0.5);
+							const slideCheck = canMove(newPos, moveCheck.slideVector);
+							if (slideCheck.canMove) {
+								targetPosition.copy(newPos);
+							}
+						}
+					}
+					if (keys["d"]) {
+						newPos.copy(targetPosition);
+						newPos.addScaledVector(right, speed);
+						const moveCheck = canMove(newPos, right);
+						if (moveCheck.canMove) {
+							targetPosition.copy(newPos);
+						} else if (moveCheck.slideVector) {
+							newPos.copy(targetPosition);
+							newPos.addScaledVector(moveCheck.slideVector, speed * 0.5);
+							const slideCheck = canMove(newPos, moveCheck.slideVector);
+							if (slideCheck.canMove) {
+								targetPosition.copy(newPos);
+							}
+						}
+					}
 
 					if (keys[" "] && !isJumping) {
 						velocity = jumpStrength;
@@ -492,8 +614,11 @@ export default function MazeGame() {
 						isJumping = false;
 					}
 
-					// Smooth interpolation to target position
 					camera.position.lerp(targetPosition, smoothingFactor);
+
+					if (playerLightRef.current) {
+						playerLightRef.current.position.copy(camera.position);
+					}
 
 					const now = Date.now();
 					if (now - lastUpdateRef.current > 50) {
@@ -522,7 +647,7 @@ export default function MazeGame() {
 							});
 					}
 
-					if (exitRef.current && !hasWonRef.current && !isTransitioningRef.current) {
+					if (exitRef.current && !gameEndedRef.current) {
 						const dx = exitRef.current.position.x - camera.position.x;
 						const dz = exitRef.current.position.z - camera.position.z;
 						const distance = Math.sqrt(dx * dx + dz * dz);
@@ -532,7 +657,6 @@ export default function MazeGame() {
 						}
 					}
 
-					// Smooth interpolation for other players
 					playerMeshesRef.current.forEach(playerObj => {
 						playerObj.mesh.position.lerp(playerObj.targetPos, 0.2);
 						playerObj.label.position.set(playerObj.mesh.position.x, playerObj.mesh.position.y + 1, playerObj.mesh.position.z);
@@ -543,20 +667,17 @@ export default function MazeGame() {
 				}
 
 				async function handleWin() {
-					if (hasWonRef.current || isTransitioningRef.current) return;
+					if (gameEndedRef.current) return;
 
-					isTransitioningRef.current = true;
-					hasWonRef.current = true;
+					gameEndedRef.current = true;
 					setWinner(playerName!);
 
-					// Send win message only once
 					await supabase.from("lobby_messages").insert({
 						lobby_id: lobbyData!.id,
 						message: `${playerName} won the maze!`,
 						is_system: true,
 					});
 
-					// Clean up position and transition
 					setTimeout(async () => {
 						await supabase.from("maze_positions").delete().eq("lobby_id", lobbyData!.id).eq("player_id", playerId);
 						router.push(`/lobby/${code}`);
@@ -577,6 +698,10 @@ export default function MazeGame() {
 						channelRef.current.unsubscribe();
 					}
 
+					if (messagesChannelRef.current) {
+						messagesChannelRef.current.unsubscribe();
+					}
+
 					if (rendererRef.current?.domElement?.parentNode) {
 						rendererRef.current.domElement.parentNode.removeChild(rendererRef.current.domElement);
 					}
@@ -585,7 +710,7 @@ export default function MazeGame() {
 						rendererRef.current = null;
 					}
 
-					if (lobbyId && currentPlayerIdRef.current && !hasWonRef.current) {
+					if (lobbyId && currentPlayerIdRef.current && !gameEndedRef.current) {
 						supabase.from("maze_positions").delete().eq("lobby_id", lobbyId).eq("player_id", currentPlayerIdRef.current);
 					}
 				};
