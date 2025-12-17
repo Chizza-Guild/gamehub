@@ -16,12 +16,13 @@
 -   Add map sizes as lobby options (maze)
 -   Add the ability to start singleplayer games to maze
 -   Fix corners being glitchy
--   Connect maze to chat
+-   Connect maze to chat and the lobby
 -   Disable ctrl W
 
 ### others
 
 -   Remove unnecessary files to clean up code
+-   Merge pinks db tables to main
 -   Add selectable profile pictures using supabase bucket
 -   Start doing ruined & unruined for chizza party
 
