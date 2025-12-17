@@ -7,6 +7,9 @@
 - Fix join lobby not appearing in localhost
 - Fix game ending being glitchy in maze
 - Add map sizes as lobby options (maze)
+- Add the ability to start singleplayer games to maze
+- Connect maze to chat
+- Disable ctrl W
 - Lobby player cap doesnt work
 - Add selectable profile pictures using supabase bucket
 - Start doing ruined & unruined for chizza party

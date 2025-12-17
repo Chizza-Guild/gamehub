@@ -99,11 +99,11 @@ export default function MazeGame() {
 	const sceneRef = useRef<THREE.Scene | null>(null);
 	const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
 	const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-	const playerMeshesRef = useRef<Map<string, { mesh: THREE.Mesh; label: THREE.Sprite }>>(new Map());
+	const playerMeshesRef = useRef<Map<string, { mesh: THREE.Mesh; label: THREE.Sprite; targetPos: THREE.Vector3 }>>(new Map());
 	const exitRef = useRef<THREE.Mesh | null>(null);
 	const wallsRef = useRef<THREE.Mesh[]>([]);
 	const mazeLayoutRef = useRef<string[]>([]);
-	const spawnPosRef = useRef<{ x: number; z: number }>({ x: 3, z: 3 });
+	const spawnPosRef = useRef<{ x: number; z: number }>({ x: 2, z: 2 });
 
 	const currentPlayerIdRef = useRef<string | null>(null);
 	const currentPlayerNameRef = useRef<string | null>(null);
@@ -112,7 +112,7 @@ export default function MazeGame() {
 	const channelRef = useRef<any>(null);
 	const lobbyChannelRef = useRef<any>(null);
 	const hasWonRef = useRef<boolean>(false);
-	const winChannelRef = useRef<any>(null);
+	const isTransitioningRef = useRef<boolean>(false);
 
 	useEffect(() => {
 		if (!code) {
@@ -214,10 +214,6 @@ export default function MazeGame() {
 
 				const scene = new THREE.Scene();
 				scene.background = new THREE.Color(0x0a0a0a);
-
-				// Add fog
-				scene.fog = new THREE.Fog(0x0a0a0a, 10, 50);
-
 				sceneRef.current = scene;
 
 				const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -236,29 +232,26 @@ export default function MazeGame() {
 				const ambientLight = new THREE.AmbientLight(0x404040, 0.8);
 				scene.add(ambientLight);
 
-				const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: 0x1a1a2e }));
+				const floor = new THREE.Mesh(new THREE.PlaneGeometry(100, 100), new THREE.MeshStandardMaterial({ color: 0x1a1a2e }));
 				floor.rotation.x = -Math.PI / 2;
 				scene.add(floor);
 
 				mazeLayoutRef.current = layout;
 				const walls: THREE.Mesh[] = [];
-
-				// Use instanced mesh for better performance
-				const wallGeometry = new THREE.BoxGeometry(3, 3, 3);
 				const wallMaterials = [new THREE.MeshStandardMaterial({ color: 0xe53e3e }), new THREE.MeshStandardMaterial({ color: 0x38a169 }), new THREE.MeshStandardMaterial({ color: 0x3182ce })];
 
 				layout.forEach((row, z) => {
 					row.split("").forEach((cell, x) => {
 						if (cell === "#") {
-							const wall = new THREE.Mesh(wallGeometry, wallMaterials[Math.floor(Math.random() * wallMaterials.length)]);
-							wall.position.set(x * 3, 1.5, z * 3);
+							const wall = new THREE.Mesh(new THREE.BoxGeometry(2, 3, 2), wallMaterials[Math.floor(Math.random() * wallMaterials.length)]);
+							wall.position.set(x * 2, 1.5, z * 2);
 							scene.add(wall);
 							walls.push(wall);
 						}
 
 						if (cell === "S") {
-							spawnPosRef.current = { x: x * 3, z: z * 3 };
-							camera.position.set(x * 3, 1.6, z * 3);
+							spawnPosRef.current = { x: x * 2, z: z * 2 };
+							camera.position.set(x * 2, 1.6, z * 2);
 						}
 
 						if (cell === "E") {
@@ -270,7 +263,7 @@ export default function MazeGame() {
 									emissiveIntensity: 0.5,
 								})
 							);
-							exit.position.set(x * 3, 0.75, z * 3);
+							exit.position.set(x * 2, 0.75, z * 2);
 							scene.add(exit);
 							exitRef.current = exit;
 						}
@@ -278,35 +271,6 @@ export default function MazeGame() {
 				});
 
 				wallsRef.current = walls;
-
-				// Subscribe to win events to sync winner state
-				winChannelRef.current = supabase
-					.channel(`maze-wins:${lobbyData.id}`)
-					.on(
-						"postgres_changes",
-						{
-							event: "INSERT",
-							schema: "public",
-							table: "lobby_messages",
-							filter: `lobby_id=eq.${lobbyData.id}`,
-						},
-						payload => {
-							const message = (payload.new as any).message;
-							if (message && message.includes("won the maze!")) {
-								const winnerName = message.split(" won the maze!")[0];
-								if (!hasWonRef.current) {
-									setWinner(winnerName);
-
-									// Return to lobby after delay
-									setTimeout(async () => {
-										await supabase.from("maze_positions").delete().eq("lobby_id", lobbyData.id).eq("player_id", playerId);
-										router.push(`/lobby/${code}`);
-									}, 3000);
-								}
-							}
-						}
-					)
-					.subscribe();
 
 				const { error: insertError } = await supabase.from("maze_positions").upsert(
 					{
@@ -384,7 +348,10 @@ export default function MazeGame() {
 				const jumpStrength = 0.15;
 				const groundLevel = 1.6;
 				const crouchLevel = 1.2;
-				const playerRadius = 0.4;
+
+				// Smooth movement variables
+				const targetPosition = new THREE.Vector3(camera.position.x, camera.position.y, camera.position.z);
+				const smoothingFactor = 0.3; // Higher = more responsive, lower = smoother
 
 				document.body.addEventListener("click", () => {
 					document.body.requestPointerLock();
@@ -401,28 +368,21 @@ export default function MazeGame() {
 				};
 				document.addEventListener("mousemove", onMouseMove);
 
-				// Improved collision detection with cylinder check
-				function canMove(newPos: THREE.Vector3): boolean {
-					// Check multiple points around the player in a cylinder
-					const checkPoints = [new THREE.Vector3(0, 0, 0), new THREE.Vector3(playerRadius, 0, 0), new THREE.Vector3(-playerRadius, 0, 0), new THREE.Vector3(0, 0, playerRadius), new THREE.Vector3(0, 0, -playerRadius), new THREE.Vector3(playerRadius * 0.7, 0, playerRadius * 0.7), new THREE.Vector3(-playerRadius * 0.7, 0, playerRadius * 0.7), new THREE.Vector3(playerRadius * 0.7, 0, -playerRadius * 0.7), new THREE.Vector3(-playerRadius * 0.7, 0, -playerRadius * 0.7)];
+				const raycaster = new THREE.Raycaster();
 
-					for (const offset of checkPoints) {
-						const checkPos = newPos.clone().add(offset);
+				function canMove(direction: THREE.Vector3, checkPlayers = true): boolean {
+					raycaster.set(camera.position, direction);
 
-						// Check against walls using bounding boxes
-						for (const wall of walls) {
-							const wallBox = new THREE.Box3().setFromObject(wall);
-							const playerPoint = new THREE.Vector3(checkPos.x, camera.position.y, checkPos.z);
+					const wallHits = raycaster.intersectObjects(walls);
+					if (wallHits.length > 0 && wallHits[0].distance < 0.6) {
+						return false;
+					}
 
-							if (wallBox.containsPoint(playerPoint)) {
-								return false;
-							}
-
-							// Also check slightly expanded box for smoother collision
-							const expandedBox = wallBox.clone().expandByScalar(0.3);
-							if (expandedBox.containsPoint(playerPoint)) {
-								return false;
-							}
+					if (checkPlayers) {
+						const playerMeshes = Array.from(playerMeshesRef.current.values()).map(p => p.mesh);
+						const playerHits = raycaster.intersectObjects(playerMeshes);
+						if (playerHits.length > 0 && playerHits[0].distance < 1.0) {
+							return false;
 						}
 					}
 
@@ -458,12 +418,16 @@ export default function MazeGame() {
 						sceneRef.current.add(mesh);
 						sceneRef.current.add(label);
 
-						playerObj = { mesh, label };
-						playerMeshesRef.current.set(pos.player_id, playerObj);
-					}
+						const targetPos = new THREE.Vector3(pos.x, pos.y, pos.z);
+						mesh.position.copy(targetPos);
+						label.position.set(pos.x, pos.y + 1, pos.z);
 
-					playerObj.mesh.position.set(pos.x, pos.y, pos.z);
-					playerObj.label.position.set(pos.x, pos.y + 1, pos.z);
+						playerObj = { mesh, label, targetPos };
+						playerMeshesRef.current.set(pos.player_id, playerObj);
+					} else {
+						// Update target position for smooth interpolation
+						playerObj.targetPos.set(pos.x, pos.y, pos.z);
+					}
 				}
 
 				function removePlayerMesh(playerId: string) {
@@ -476,7 +440,7 @@ export default function MazeGame() {
 				}
 
 				function animate() {
-					if (!mounted) return;
+					if (!mounted || hasWonRef.current) return;
 
 					animationId = requestAnimationFrame(animate);
 
@@ -488,42 +452,30 @@ export default function MazeGame() {
 					const right = new THREE.Vector3();
 					right.crossVectors(forward, new THREE.Vector3(0, 1, 0));
 
-					let speed = 0.1;
+					let speed = 0.07;
 					let targetHeight = groundLevel;
 
 					if (keys["Shift"]) {
-						speed = 0.2;
+						speed = 0.14;
 					}
 
 					if (keys["Control"]) {
 						isCrouching = true;
 						targetHeight = crouchLevel;
-						speed = 0.05;
+						speed = 0.03;
 					} else {
 						isCrouching = false;
 					}
 
 					if (!isJumping) {
-						camera.position.y += (targetHeight - camera.position.y) * 0.2;
+						targetPosition.y += (targetHeight - targetPosition.y) * 0.2;
 					}
 
-					// Movement with improved collision detection
-					if (keys["w"]) {
-						const newPos = camera.position.clone().addScaledVector(forward, speed);
-						if (canMove(newPos)) camera.position.copy(newPos);
-					}
-					if (keys["s"]) {
-						const newPos = camera.position.clone().addScaledVector(forward, -speed);
-						if (canMove(newPos)) camera.position.copy(newPos);
-					}
-					if (keys["a"]) {
-						const newPos = camera.position.clone().addScaledVector(right, -speed);
-						if (canMove(newPos)) camera.position.copy(newPos);
-					}
-					if (keys["d"]) {
-						const newPos = camera.position.clone().addScaledVector(right, speed);
-						if (canMove(newPos)) camera.position.copy(newPos);
-					}
+					// Update target position based on input
+					if (keys["w"] && canMove(forward)) targetPosition.addScaledVector(forward, speed);
+					if (keys["s"] && canMove(forward.clone().negate())) targetPosition.addScaledVector(forward, -speed);
+					if (keys["a"] && canMove(right.clone().negate())) targetPosition.addScaledVector(right, -speed);
+					if (keys["d"] && canMove(right)) targetPosition.addScaledVector(right, speed);
 
 					if (keys[" "] && !isJumping) {
 						velocity = jumpStrength;
@@ -531,37 +483,46 @@ export default function MazeGame() {
 					}
 
 					velocity += gravity;
-					camera.position.y += velocity;
+					targetPosition.y += velocity;
 
 					const currentGroundLevel = isCrouching ? crouchLevel : groundLevel;
-					if (camera.position.y <= currentGroundLevel) {
-						camera.position.y = currentGroundLevel;
+					if (targetPosition.y <= currentGroundLevel) {
+						targetPosition.y = currentGroundLevel;
 						velocity = 0;
 						isJumping = false;
 					}
 
+					// Smooth interpolation to target position
+					camera.position.lerp(targetPosition, smoothingFactor);
+
 					const now = Date.now();
-					if (now - lastUpdateRef.current > 50 && !hasWonRef.current) {
+					if (now - lastUpdateRef.current > 50) {
 						lastUpdateRef.current = now;
 
-						supabase.from("maze_positions").upsert(
-							{
-								lobby_id: lobbyData!.id,
-								player_id: playerId,
-								player_name: playerName,
-								x: camera.position.x,
-								y: camera.position.y,
-								z: camera.position.z,
-								yaw: yaw,
-								pitch: pitch,
-								color: playerColorRef.current,
-								last_updated: new Date().toISOString(),
-							},
-							{ onConflict: "lobby_id,player_id" }
-						);
+						const updateData = {
+							lobby_id: lobbyData!.id,
+							player_id: playerId,
+							player_name: playerName,
+							x: camera.position.x,
+							y: camera.position.y,
+							z: camera.position.z,
+							yaw: yaw,
+							pitch: pitch,
+							color: playerColorRef.current,
+							last_updated: new Date().toISOString(),
+						};
+
+						supabase
+							.from("maze_positions")
+							.upsert(updateData, { onConflict: "lobby_id,player_id" })
+							.then(({ error }) => {
+								if (error) {
+									console.error("Position update error:", error);
+								}
+							});
 					}
 
-					if (exitRef.current && !hasWonRef.current) {
+					if (exitRef.current && !hasWonRef.current && !isTransitioningRef.current) {
 						const dx = exitRef.current.position.x - camera.position.x;
 						const dz = exitRef.current.position.z - camera.position.z;
 						const distance = Math.sqrt(dx * dx + dz * dz);
@@ -571,7 +532,10 @@ export default function MazeGame() {
 						}
 					}
 
+					// Smooth interpolation for other players
 					playerMeshesRef.current.forEach(playerObj => {
+						playerObj.mesh.position.lerp(playerObj.targetPos, 0.2);
+						playerObj.label.position.set(playerObj.mesh.position.x, playerObj.mesh.position.y + 1, playerObj.mesh.position.z);
 						playerObj.label.lookAt(camera.position);
 					});
 
@@ -579,9 +543,10 @@ export default function MazeGame() {
 				}
 
 				async function handleWin() {
-					if (hasWonRef.current) return;
-					hasWonRef.current = true;
+					if (hasWonRef.current || isTransitioningRef.current) return;
 
+					isTransitioningRef.current = true;
+					hasWonRef.current = true;
 					setWinner(playerName!);
 
 					// Send win message only once
@@ -591,7 +556,7 @@ export default function MazeGame() {
 						is_system: true,
 					});
 
-					// Delete position and return to lobby
+					// Clean up position and transition
 					setTimeout(async () => {
 						await supabase.from("maze_positions").delete().eq("lobby_id", lobbyData!.id).eq("player_id", playerId);
 						router.push(`/lobby/${code}`);
@@ -610,10 +575,6 @@ export default function MazeGame() {
 
 					if (channelRef.current) {
 						channelRef.current.unsubscribe();
-					}
-
-					if (winChannelRef.current) {
-						winChannelRef.current.unsubscribe();
 					}
 
 					if (rendererRef.current?.domElement?.parentNode) {
