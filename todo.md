@@ -4,11 +4,8 @@
 
 ### lobby
 
--   Add private lobby option (Not visible on the list)
 -   Fix the mouse request thingy on other pages
 -   Fix join lobby not appearing in localhost (Needs restart, also games load twice/same page)
--   Lobby player cap doesnt work
--   Add Kick button for admins which should return the player to main menu
 
 ### maze
 

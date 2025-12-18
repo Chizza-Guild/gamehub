@@ -51,6 +51,7 @@ export default function LobbyPage() {
 	const [messageInput, setMessageInput] = useState("");
 	const [gameType, setGameType] = useState("");
 	const [maxPlayers, setMaxPlayers] = useState(8);
+	const [isPrivate, setIsPrivate] = useState(false);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [currentPlayerId, setCurrentPlayerId] = useState<string | null>(null);
@@ -62,6 +63,7 @@ export default function LobbyPage() {
 	const cleanupRef = useRef<NodeJS.Timeout | null>(null);
 	const messagesEndRef = useRef<HTMLDivElement | null>(null);
 	const maxPlayersDebounceRef = useRef<NodeJS.Timeout | null>(null);
+	const isPrivateDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
 	const scrollToBottom = () => {
 		messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -112,6 +114,39 @@ export default function LobbyPage() {
 		}, 500);
 	};
 
+	const handlePrivateChange = (value: boolean) => {
+		setIsPrivate(value);
+
+		if (isPrivateDebounceRef.current) {
+			clearTimeout(isPrivateDebounceRef.current);
+		}
+
+		isPrivateDebounceRef.current = setTimeout(async () => {
+			if (!lobby) return;
+
+			await supabase
+				.from("lobbies")
+				.update({
+					settings: {
+						...lobby.settings,
+						isPrivate: value,
+					},
+				})
+				.eq("id", lobby.id);
+
+			setLobby(prev => {
+				if (!prev) return prev;
+				return {
+					...prev,
+					settings: {
+						...prev.settings,
+						isPrivate: value,
+					},
+				};
+			});
+		}, 500);
+	};
+
 	useEffect(() => {
 		if (!code) return;
 
@@ -143,6 +178,18 @@ export default function LobbyPage() {
 			setLobby(lobbyData);
 			setGameType(lobbyData.game_type || "");
 			setMaxPlayers(lobbyData.settings?.maxPlayers || 8);
+			setIsPrivate(lobbyData.settings?.isPrivate || false);
+
+			const { data: currentPlayers } = await supabase.from("lobby_players").select("player_id").eq("lobby_id", lobbyData.id);
+
+			if (currentPlayers && currentPlayers.length >= (lobbyData.settings?.maxPlayers || 8)) {
+				const isAlreadyIn = currentPlayers.some(p => p.player_id === playerId);
+				if (!isAlreadyIn) {
+					setError("Lobby is full");
+					setLoading(false);
+					return;
+				}
+			}
 
 			await supabase.from("lobby_players").upsert({
 				lobby_id: lobbyData.id,
@@ -181,6 +228,21 @@ export default function LobbyPage() {
 						setPlayers(data || []);
 					}
 				)
+				.on(
+					"postgres_changes",
+					{
+						event: "UPDATE",
+						schema: "public",
+						table: "lobbies",
+						filter: `id=eq.${lobbyData.id}`,
+					},
+					async payload => {
+						const updatedLobby = payload.new as Lobby;
+						setLobby(updatedLobby);
+						setMaxPlayers(updatedLobby.settings?.maxPlayers || 8);
+						setIsPrivate(updatedLobby.settings?.isPrivate || false);
+					}
+				)
 				.subscribe();
 
 			messagesChannel.current = supabase
@@ -200,6 +262,13 @@ export default function LobbyPage() {
 						if (newMessage.is_system && newMessage.message.startsWith("GAME_START:")) {
 							const gameType = newMessage.message.replace("GAME_START:", "");
 							router.push(`/games/${gameType}/${code}`);
+						}
+
+						if (newMessage.is_system && newMessage.message.startsWith("KICKED:")) {
+							const kickedPlayerId = newMessage.message.replace("KICKED:", "");
+							if (kickedPlayerId === playerId) {
+								router.push("/");
+							}
 						}
 					}
 				)
@@ -223,6 +292,9 @@ export default function LobbyPage() {
 			messagesChannel.current?.unsubscribe();
 			if (maxPlayersDebounceRef.current) {
 				clearTimeout(maxPlayersDebounceRef.current);
+			}
+			if (isPrivateDebounceRef.current) {
+				clearTimeout(isPrivateDebounceRef.current);
 			}
 		};
 	}, [code]);
@@ -296,6 +368,19 @@ export default function LobbyPage() {
 		await sendSystemMessage(`${name} ${target.is_muted ? "unmuted by admin" : "muted by admin"}`);
 	};
 
+	const handleKickPlayer = async (playerId: string, name: string) => {
+		if (!lobby || !isAdmin || playerId === currentPlayerId) return;
+
+		await supabase.from("lobby_players").delete().eq("lobby_id", lobby.id).eq("player_id", playerId);
+		await sendSystemMessage(`${name} was kicked by admin`);
+
+		await supabase.from("lobby_messages").insert({
+			lobby_id: lobby.id,
+			message: `KICKED:${playerId}`,
+			is_system: true,
+		});
+	};
+
 	const handleLeaveLobby = async () => {
 		if (!lobby || !currentPlayerId) return;
 
@@ -337,24 +422,30 @@ export default function LobbyPage() {
 						<h2 className="card-title">Chat</h2>
 
 						<div className="chat-messages">
-							{messages.map(msg => (
-								<div key={msg.id} className={`chat-message ${msg.is_system ? "chat-message-system" : ""}`}>
-									{msg.is_system ? (
-										<div className="chat-message-content">
-											<span className="chat-system-text">{msg.message}</span>
-											<span className="chat-time">{formatTime(msg.created_at)}</span>
-										</div>
-									) : (
-										<div className="chat-message-content">
-											<div className="chat-message-header">
-												<span className="chat-player-name">{msg.player_name}</span>
+							{messages.map(msg => {
+								if (msg.is_system && msg.message.startsWith("KICKED:")) {
+									return null;
+								}
+
+								return (
+									<div key={msg.id} className={`chat-message ${msg.is_system ? "chat-message-system" : ""}`}>
+										{msg.is_system ? (
+											<div className="chat-message-content">
+												<span className="chat-system-text">{msg.message}</span>
 												<span className="chat-time">{formatTime(msg.created_at)}</span>
 											</div>
-											<div className="chat-message-text">{msg.message}</div>
-										</div>
-									)}
-								</div>
-							))}
+										) : (
+											<div className="chat-message-content">
+												<div className="chat-message-header">
+													<span className="chat-player-name">{msg.player_name}</span>
+													<span className="chat-time">{formatTime(msg.created_at)}</span>
+												</div>
+												<div className="chat-message-text">{msg.message}</div>
+											</div>
+										)}
+									</div>
+								);
+							})}
 							<div ref={messagesEndRef} />
 						</div>
 
@@ -384,9 +475,14 @@ export default function LobbyPage() {
 										</div>
 
 										{isAdmin && !isCurrent && (
-											<button onClick={() => handleToggleMute(player.player_id, player.name)} className="mute-button">
-												{player.is_muted ? "Unmute" : "Mute"}
-											</button>
+											<div style={{ display: "flex", gap: "8px" }}>
+												<button onClick={() => handleToggleMute(player.player_id, player.name)} className="mute-button">
+													{player.is_muted ? "Unmute" : "Mute"}
+												</button>
+												<button onClick={() => handleKickPlayer(player.player_id, player.name)} className="mute-button" style={{ backgroundColor: "#dc2626" }}>
+													Kick
+												</button>
+											</div>
 										)}
 									</div>
 								);
@@ -412,6 +508,13 @@ export default function LobbyPage() {
 								<div className="form-group">
 									<label className="form-label">Max Players: {maxPlayers}</label>
 									<input type="range" min="2" max="16" value={maxPlayers} onChange={e => handleMaxPlayersChange(parseInt(e.target.value))} className="form-range" />
+								</div>
+
+								<div className="form-group">
+									<label className="form-label" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+										<input type="checkbox" checked={isPrivate} onChange={e => handlePrivateChange(e.target.checked)} style={{ width: "18px", height: "18px" }} />
+										Private Lobby
+									</label>
 								</div>
 
 								<button onClick={handleStartGame} disabled={!gameType || players.length < 2} className="button button-success button-full">

@@ -29,6 +29,7 @@ export default function Home() {
 	const [username, setUsername] = useState("");
 	const [editingName, setEditingName] = useState(false);
 	const [lobbies, setLobbies] = useState<LobbyWithCount[]>([]);
+	const [isPrivateLobby, setIsPrivateLobby] = useState(false);
 
 	useEffect(() => {
 		const existing = localStorage.getItem("playerName");
@@ -92,7 +93,7 @@ export default function Home() {
 			game_type: null,
 			settings: {
 				maxPlayers: 8,
-				isPrivate: false,
+				isPrivate: isPrivateLobby,
 				mutedPlayers: [],
 			},
 		});
@@ -136,6 +137,12 @@ export default function Home() {
 			</div>
 
 			<div className="mb-8">
+				<div className="flex items-center gap-4 mb-3">
+					<label className="flex items-center gap-2 cursor-pointer">
+						<input type="checkbox" checked={isPrivateLobby} onChange={e => setIsPrivateLobby(e.target.checked)} className="w-4 h-4 rounded bg-gray-800 border-gray-700" />
+						<span className="text-gray-300">🔒 Private Lobby</span>
+					</label>
+				</div>
 				<button onClick={createLobby} disabled={creating} className="px-6 py-3 bg-green-600 rounded-lg font-bold" style={{ width: 280 }}>
 					{creating ? "Creating Lobby..." : "🎲 Create Lobby"}
 				</button>
@@ -179,7 +186,7 @@ export default function Home() {
 			</div>
 			<div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-4xl">
 				<Link href="/games/tshirt" className="p-6 bg-gray-800 rounded-lg">
-					 TShirtGametest
+					TShirtGametest
 				</Link>
 			</div>
 		</div>
