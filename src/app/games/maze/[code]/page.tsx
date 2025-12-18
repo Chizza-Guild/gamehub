@@ -16,6 +16,21 @@ type PlayerPosition = {
 	color: string;
 };
 
+type Message = {
+	id: string;
+	lobby_id: number;
+	player_id: string | null;
+	player_name: string | null;
+	message: string;
+	is_system: boolean;
+	created_at: string;
+};
+
+type Player = {
+	player_id: string;
+	is_muted: boolean;
+};
+
 function generateMaze(size: number) {
 	const maze = Array.from({ length: size }, () => Array(size).fill("#"));
 	const dirs = [
@@ -86,6 +101,8 @@ function getRandomColor() {
 	return colors[Math.floor(Math.random() * colors.length)];
 }
 
+const formatTime = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
 export default function MazeGame() {
 	const { code } = useParams<{ code: string }>();
 	const router = useRouter();
@@ -95,6 +112,10 @@ export default function MazeGame() {
 	const [winner, setWinner] = useState<string | null>(null);
 	const [lobbyId, setLobbyId] = useState<number | null>(null);
 	const [waitingForMaze, setWaitingForMaze] = useState(false);
+	const [messages, setMessages] = useState<Message[]>([]);
+	const [messageInput, setMessageInput] = useState("");
+	const [isChatVisible, setIsChatVisible] = useState(true);
+	const [players, setPlayers] = useState<Player[]>([]);
 
 	const sceneRef = useRef<THREE.Scene | null>(null);
 	const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -113,7 +134,15 @@ export default function MazeGame() {
 	const channelRef = useRef<any>(null);
 	const lobbyChannelRef = useRef<any>(null);
 	const messagesChannelRef = useRef<any>(null);
+	const playersChannelRef = useRef<any>(null);
 	const gameEndedRef = useRef<boolean>(false);
+	const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+	const scrollToBottom = () => {
+		messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+	};
+
+	useEffect(scrollToBottom, [messages]);
 
 	useEffect(() => {
 		if (!code) {
@@ -150,6 +179,12 @@ export default function MazeGame() {
 
 				setLobbyId(lobbyData.id);
 
+				const { data: messagesData } = await supabase.from("lobby_messages").select("*").eq("lobby_id", lobbyData.id).order("created_at");
+				setMessages(messagesData || []);
+
+				const { data: playersData } = await supabase.from("lobby_players").select("player_id, is_muted").eq("lobby_id", lobbyData.id);
+				setPlayers(playersData || []);
+
 				const { data: messages } = await supabase.from("lobby_messages").select("message").eq("lobby_id", lobbyData.id).eq("is_system", true).like("message", "% won the maze!").order("created_at", { ascending: false }).limit(1);
 
 				if (messages && messages.length > 0) {
@@ -164,11 +199,12 @@ export default function MazeGame() {
 
 				const isAdmin = playerData?.is_admin || false;
 
+				const mazeSize = lobbyData.settings?.mazeSize || 20;
 				let layout: string[] | undefined = lobbyData.settings?.mazeLayout;
 
 				if (!layout) {
 					if (isAdmin) {
-						layout = generateMaze(20);
+						layout = generateMaze(mazeSize);
 						const { error: updateError } = await supabase
 							.from("lobbies")
 							.update({
@@ -261,7 +297,6 @@ export default function MazeGame() {
 							scene.add(wall);
 							walls.push(wall);
 
-							// Add roof on top of walls
 							const roof = new THREE.Mesh(new THREE.BoxGeometry(2, 0.2, 2), new THREE.MeshStandardMaterial({ color: 0x2d2d2d }));
 							roof.position.set(x * 2, 3.1, z * 2);
 							scene.add(roof);
@@ -313,6 +348,23 @@ export default function MazeGame() {
 					return;
 				}
 
+				playersChannelRef.current = supabase
+					.channel(`lobby-players:${lobbyData.id}`)
+					.on(
+						"postgres_changes",
+						{
+							event: "*",
+							schema: "public",
+							table: "lobby_players",
+							filter: `lobby_id=eq.${lobbyData.id}`,
+						},
+						async () => {
+							const { data } = await supabase.from("lobby_players").select("player_id, is_muted").eq("lobby_id", lobbyData.id);
+							setPlayers(data || []);
+						}
+					)
+					.subscribe();
+
 				messagesChannelRef.current = supabase
 					.channel(`lobby-messages:${lobbyData.id}`)
 					.on(
@@ -324,7 +376,9 @@ export default function MazeGame() {
 							filter: `lobby_id=eq.${lobbyData.id}`,
 						},
 						payload => {
-							const message = payload.new as any;
+							const message = payload.new as Message;
+							setMessages(prev => [...prev, message].slice(-200));
+
 							if (message.is_system && message.message.includes("won the maze!")) {
 								const winnerName = message.message.replace(" won the maze!", "");
 								if (!gameEndedRef.current) {
@@ -334,6 +388,14 @@ export default function MazeGame() {
 										await supabase.from("maze_positions").delete().eq("lobby_id", lobbyData.id).eq("player_id", playerId);
 										router.push(`/lobby/${code}`);
 									}, 3000);
+								}
+							}
+
+							if (message.is_system && message.message.startsWith("KICKED:")) {
+								const kickedPlayerId = message.message.replace("KICKED:", "");
+								if (kickedPlayerId === playerId) {
+									gameEndedRef.current = true;
+									setTimeout(() => router.push("/"), 2000);
 								}
 							}
 						}
@@ -379,7 +441,13 @@ export default function MazeGame() {
 				setLoading(false);
 
 				const keys: Record<string, boolean> = {};
-				const onKeyDown = (e: KeyboardEvent) => (keys[e.key] = true);
+				const onKeyDown = (e: KeyboardEvent) => {
+					keys[e.key] = true;
+					if (e.key === "t" || e.key === "T") {
+						e.preventDefault();
+						setIsChatVisible(prev => !prev);
+					}
+				};
 				const onKeyUp = (e: KeyboardEvent) => (keys[e.key] = false);
 				document.addEventListener("keydown", onKeyDown);
 				document.addEventListener("keyup", onKeyUp);
@@ -702,9 +770,14 @@ export default function MazeGame() {
 						messagesChannelRef.current.unsubscribe();
 					}
 
+					if (playersChannelRef.current) {
+						playersChannelRef.current.unsubscribe();
+					}
+
 					if (rendererRef.current?.domElement?.parentNode) {
 						rendererRef.current.domElement.parentNode.removeChild(rendererRef.current.domElement);
 					}
+
 					if (rendererRef.current) {
 						rendererRef.current.dispose();
 						rendererRef.current = null;
@@ -733,6 +806,28 @@ export default function MazeGame() {
 			}
 		};
 	}, [code, router]);
+
+	const handleSendMessage = async (e: React.FormEvent) => {
+		e.preventDefault();
+		if (!messageInput.trim() || !lobbyId) return;
+
+		const currentPlayer = players.find(p => p.player_id === currentPlayerIdRef.current);
+		if (currentPlayer?.is_muted) return;
+
+		const supabase = createClient();
+		await supabase.from("lobby_messages").insert({
+			lobby_id: lobbyId,
+			player_id: currentPlayerIdRef.current,
+			player_name: currentPlayerNameRef.current,
+			message: messageInput.trim(),
+			is_system: false,
+		});
+
+		setMessageInput("");
+	};
+
+	const currentPlayer = players.find(p => p.player_id === currentPlayerIdRef.current);
+	const isMuted = currentPlayer?.is_muted || false;
 
 	if (error) {
 		return (
@@ -839,8 +934,112 @@ export default function MazeGame() {
 				<div>Shift - Sprint</div>
 				<div>Space - Jump</div>
 				<div>Ctrl - Crouch</div>
+				<div>T - Toggle Chat</div>
 				<div style={{ marginTop: "10px" }}>Click to lock mouse</div>
 			</div>
+
+			{isChatVisible && (
+				<div
+					style={{
+						position: "absolute",
+						top: "20px",
+						right: "20px",
+						width: "350px",
+						maxHeight: "500px",
+						background: "rgba(0, 0, 0, 0.85)",
+						borderRadius: "8px",
+						padding: "15px",
+						display: "flex",
+						flexDirection: "column",
+						gap: "10px",
+						fontFamily: "Arial, sans-serif",
+					}}
+				>
+					<h3 style={{ margin: 0, color: "white", fontSize: "16px", borderBottom: "1px solid rgba(255,255,255,0.2)", paddingBottom: "8px" }}>Chat</h3>
+
+					<div
+						style={{
+							flex: 1,
+							overflowY: "auto",
+							display: "flex",
+							flexDirection: "column",
+							gap: "8px",
+							maxHeight: "350px",
+						}}
+					>
+						{messages.map(msg => {
+							if (msg.is_system && msg.message.startsWith("KICKED:")) {
+								return null;
+							}
+
+							return (
+								<div
+									key={msg.id}
+									style={{
+										padding: "6px 10px",
+										borderRadius: "4px",
+										background: msg.is_system ? "rgba(100, 100, 255, 0.2)" : "rgba(255, 255, 255, 0.1)",
+									}}
+								>
+									{msg.is_system ? (
+										<div style={{ fontSize: "12px", color: "#aaf", fontStyle: "italic" }}>
+											{msg.message}
+											<span style={{ marginLeft: "8px", opacity: 0.6, fontSize: "10px" }}>{formatTime(msg.created_at)}</span>
+										</div>
+									) : (
+										<div>
+											<div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+												<span style={{ color: "#4ECDC4", fontWeight: "bold", fontSize: "13px" }}>{msg.player_name}</span>
+												<span style={{ color: "#999", fontSize: "10px" }}>{formatTime(msg.created_at)}</span>
+											</div>
+											<div style={{ color: "white", fontSize: "13px", wordBreak: "break-word" }}>{msg.message}</div>
+										</div>
+									)}
+								</div>
+							);
+						})}
+						<div ref={messagesEndRef} />
+					</div>
+
+					<form onSubmit={handleSendMessage} style={{ display: "flex", gap: "8px" }}>
+						<input
+							type="text"
+							value={messageInput}
+							onChange={e => setMessageInput(e.target.value)}
+							placeholder={isMuted ? "You are muted" : "Type a message..."}
+							disabled={isMuted}
+							maxLength={200}
+							style={{
+								flex: 1,
+								padding: "8px 12px",
+								borderRadius: "4px",
+								border: "1px solid rgba(255,255,255,0.3)",
+								background: "rgba(255,255,255,0.1)",
+								color: "white",
+								fontSize: "13px",
+							}}
+						/>
+						<button
+							type="submit"
+							disabled={!messageInput.trim() || isMuted}
+							style={{
+								padding: "8px 16px",
+								borderRadius: "4px",
+								border: "none",
+								background: !messageInput.trim() || isMuted ? "#555" : "#4ECDC4",
+								color: "white",
+								cursor: !messageInput.trim() || isMuted ? "not-allowed" : "pointer",
+								fontSize: "13px",
+								fontWeight: "bold",
+							}}
+						>
+							Send
+						</button>
+					</form>
+
+					{isMuted && <p style={{ margin: 0, color: "#ff6b6b", fontSize: "12px", textAlign: "center" }}>You have been muted by the admin</p>}
+				</div>
+			)}
 		</div>
 	);
 }

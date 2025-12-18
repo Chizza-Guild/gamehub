@@ -10,10 +10,7 @@
 ### maze
 
 -   Fix game ending being glitchy in maze (test if fixed)
--   Add map sizes as lobby options (maze)
--   Add the ability to start singleplayer games to maze
 -   Fix corners being glitchy
--   Connect maze to chat and the lobby
 -   Disable ctrl W
 
 ### others
@@ -22,6 +19,7 @@
 -   Merge pinks db tables to main
 -   Add selectable profile pictures using supabase bucket
 -   Start doing ruined & unruined for chizza party
+-   Create RLS for all DB's
 
 ## Future Ideas
 

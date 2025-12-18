@@ -19,6 +19,7 @@ type LobbySettings = {
 	maxPlayers: number;
 	isPrivate: boolean;
 	mazeLayout?: string[];
+	mazeSize?: number;
 };
 
 type Lobby = {
@@ -52,6 +53,7 @@ export default function LobbyPage() {
 	const [gameType, setGameType] = useState("");
 	const [maxPlayers, setMaxPlayers] = useState(8);
 	const [isPrivate, setIsPrivate] = useState(false);
+	const [mazeSize, setMazeSize] = useState(20);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
 	const [currentPlayerId, setCurrentPlayerId] = useState<string | null>(null);
@@ -64,6 +66,7 @@ export default function LobbyPage() {
 	const messagesEndRef = useRef<HTMLDivElement | null>(null);
 	const maxPlayersDebounceRef = useRef<NodeJS.Timeout | null>(null);
 	const isPrivateDebounceRef = useRef<NodeJS.Timeout | null>(null);
+	const mazeSizeDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
 	const scrollToBottom = () => {
 		messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -147,6 +150,41 @@ export default function LobbyPage() {
 		}, 500);
 	};
 
+	const handleMazeSizeChange = (value: number) => {
+		setMazeSize(value);
+
+		if (mazeSizeDebounceRef.current) {
+			clearTimeout(mazeSizeDebounceRef.current);
+		}
+
+		mazeSizeDebounceRef.current = setTimeout(async () => {
+			if (!lobby) return;
+
+			await supabase
+				.from("lobbies")
+				.update({
+					settings: {
+						...lobby.settings,
+						mazeSize: value,
+						mazeLayout: undefined,
+					},
+				})
+				.eq("id", lobby.id);
+
+			setLobby(prev => {
+				if (!prev) return prev;
+				return {
+					...prev,
+					settings: {
+						...prev.settings,
+						mazeSize: value,
+						mazeLayout: undefined,
+					},
+				};
+			});
+		}, 500);
+	};
+
 	useEffect(() => {
 		if (!code) return;
 
@@ -179,6 +217,7 @@ export default function LobbyPage() {
 			setGameType(lobbyData.game_type || "");
 			setMaxPlayers(lobbyData.settings?.maxPlayers || 8);
 			setIsPrivate(lobbyData.settings?.isPrivate || false);
+			setMazeSize(lobbyData.settings?.mazeSize || 20);
 
 			const { data: currentPlayers } = await supabase.from("lobby_players").select("player_id").eq("lobby_id", lobbyData.id);
 
@@ -241,6 +280,7 @@ export default function LobbyPage() {
 						setLobby(updatedLobby);
 						setMaxPlayers(updatedLobby.settings?.maxPlayers || 8);
 						setIsPrivate(updatedLobby.settings?.isPrivate || false);
+						setMazeSize(updatedLobby.settings?.mazeSize || 20);
 					}
 				)
 				.subscribe();
@@ -295,6 +335,9 @@ export default function LobbyPage() {
 			}
 			if (isPrivateDebounceRef.current) {
 				clearTimeout(isPrivateDebounceRef.current);
+			}
+			if (mazeSizeDebounceRef.current) {
+				clearTimeout(mazeSizeDebounceRef.current);
 			}
 		};
 	}, [code]);
@@ -393,6 +436,9 @@ export default function LobbyPage() {
 	const handleStartGame = async () => {
 		if (!lobby || !gameType || !isAdmin) return;
 
+		if (gameType === "maze" && players.length < 1) return;
+		if (gameType !== "maze" && players.length < 2) return;
+
 		await supabase.from("lobby_messages").insert({
 			lobby_id: lobby.id,
 			message: `GAME_START:${gameType}`,
@@ -406,6 +452,8 @@ export default function LobbyPage() {
 
 	if (loading) return <div className="lobby-container">Loading…</div>;
 	if (error || !lobby) return <div className="lobby-container">{error}</div>;
+
+	const minPlayers = gameType === "maze" ? 1 : 2;
 
 	return (
 		<div className="lobby-container">
@@ -505,6 +553,17 @@ export default function LobbyPage() {
 									</select>
 								</div>
 
+								{gameType === "maze" && (
+									<div className="form-group">
+										<label className="form-label">Maze Size</label>
+										<select value={mazeSize} onChange={e => handleMazeSizeChange(parseInt(e.target.value))} className="form-select">
+											<option value="10">Small (10x10)</option>
+											<option value="20">Medium (20x20)</option>
+											<option value="50">Large (50x50)</option>
+										</select>
+									</div>
+								)}
+
 								<div className="form-group">
 									<label className="form-label">Max Players: {maxPlayers}</label>
 									<input type="range" min="2" max="16" value={maxPlayers} onChange={e => handleMaxPlayersChange(parseInt(e.target.value))} className="form-range" />
@@ -517,8 +576,8 @@ export default function LobbyPage() {
 									</label>
 								</div>
 
-								<button onClick={handleStartGame} disabled={!gameType || players.length < 2} className="button button-success button-full">
-									Start Game
+								<button onClick={handleStartGame} disabled={!gameType || players.length < minPlayers} className="button button-success button-full">
+									Start Game {gameType === "maze" && "(Single/Multiplayer)"}
 								</button>
 							</div>
 						) : (
