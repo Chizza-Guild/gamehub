@@ -28,7 +28,9 @@ type Message = {
 
 type Player = {
 	player_id: string;
+	name: string;
 	is_muted: boolean;
+	is_admin: boolean;
 };
 
 function generateMaze(size: number) {
@@ -115,7 +117,9 @@ export default function MazeGame() {
 	const [messages, setMessages] = useState<Message[]>([]);
 	const [messageInput, setMessageInput] = useState("");
 	const [isChatVisible, setIsChatVisible] = useState(true);
+	const [isChatFocused, setIsChatFocused] = useState(false);
 	const [players, setPlayers] = useState<Player[]>([]);
+	const chatInputRef = useRef<HTMLInputElement | null>(null);
 
 	const sceneRef = useRef<THREE.Scene | null>(null);
 	const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -182,7 +186,7 @@ export default function MazeGame() {
 				const { data: messagesData } = await supabase.from("lobby_messages").select("*").eq("lobby_id", lobbyData.id).order("created_at");
 				setMessages(messagesData || []);
 
-				const { data: playersData } = await supabase.from("lobby_players").select("player_id, is_muted").eq("lobby_id", lobbyData.id);
+				const { data: playersData } = await supabase.from("lobby_players").select("player_id, name, is_muted, is_admin").eq("lobby_id", lobbyData.id);
 				setPlayers(playersData || []);
 
 				const { data: messages } = await supabase.from("lobby_messages").select("message").eq("lobby_id", lobbyData.id).eq("is_system", true).like("message", "% won the maze!").order("created_at", { ascending: false }).limit(1);
@@ -359,7 +363,7 @@ export default function MazeGame() {
 							filter: `lobby_id=eq.${lobbyData.id}`,
 						},
 						async () => {
-							const { data } = await supabase.from("lobby_players").select("player_id, is_muted").eq("lobby_id", lobbyData.id);
+							const { data } = await supabase.from("lobby_players").select("player_id, name, is_muted, is_admin").eq("lobby_id", lobbyData.id);
 							setPlayers(data || []);
 						}
 					)
@@ -442,13 +446,26 @@ export default function MazeGame() {
 
 				const keys: Record<string, boolean> = {};
 				const onKeyDown = (e: KeyboardEvent) => {
+					if (isChatFocused) {
+						if (e.key === "Escape") {
+							setIsChatFocused(false);
+							document.body.requestPointerLock();
+						}
+						return;
+					}
+
 					keys[e.key] = true;
-					if (e.key === "t" || e.key === "T") {
+					if (e.key === "t" || e.key === "T" || e.key === "Enter") {
 						e.preventDefault();
-						setIsChatVisible(prev => !prev);
+						setIsChatFocused(true);
+						document.exitPointerLock();
+						setTimeout(() => chatInputRef.current?.focus(), 100);
 					}
 				};
-				const onKeyUp = (e: KeyboardEvent) => (keys[e.key] = false);
+				const onKeyUp = (e: KeyboardEvent) => {
+					if (isChatFocused) return;
+					keys[e.key] = false;
+				};
 				document.addEventListener("keydown", onKeyDown);
 				document.addEventListener("keyup", onKeyUp);
 
@@ -466,11 +483,13 @@ export default function MazeGame() {
 				const smoothingFactor = 0.3;
 
 				document.body.addEventListener("click", () => {
-					document.body.requestPointerLock();
+					if (!isChatFocused) {
+						document.body.requestPointerLock();
+					}
 				});
 
 				const onMouseMove = (e: MouseEvent) => {
-					if (document.pointerLockElement !== document.body) return;
+					if (document.pointerLockElement !== document.body || isChatFocused) return;
 
 					yaw -= e.movementX * 0.002;
 					pitch -= e.movementY * 0.002;
@@ -576,6 +595,18 @@ export default function MazeGame() {
 					if (!mounted || gameEndedRef.current) return;
 
 					animationId = requestAnimationFrame(animate);
+
+					if (isChatFocused) {
+						renderer.render(scene, camera);
+
+						playerMeshesRef.current.forEach(playerObj => {
+							playerObj.mesh.position.lerp(playerObj.targetPos, 0.2);
+							playerObj.label.position.set(playerObj.mesh.position.x, playerObj.mesh.position.y + 1, playerObj.mesh.position.z);
+							playerObj.label.lookAt(camera.position);
+						});
+
+						return;
+					}
 
 					const forward = new THREE.Vector3();
 					camera.getWorldDirection(forward);
@@ -777,7 +808,6 @@ export default function MazeGame() {
 					if (rendererRef.current?.domElement?.parentNode) {
 						rendererRef.current.domElement.parentNode.removeChild(rendererRef.current.domElement);
 					}
-
 					if (rendererRef.current) {
 						rendererRef.current.dispose();
 						rendererRef.current = null;
@@ -824,10 +854,53 @@ export default function MazeGame() {
 		});
 
 		setMessageInput("");
+		setIsChatFocused(false);
+		document.body.requestPointerLock();
 	};
 
 	const currentPlayer = players.find(p => p.player_id === currentPlayerIdRef.current);
 	const isMuted = currentPlayer?.is_muted || false;
+	const isAdmin = currentPlayer?.is_admin || false;
+
+	const handleKickPlayer = async (playerId: string, playerName: string) => {
+		if (!lobbyId || playerId === currentPlayerIdRef.current) return;
+
+		const supabase = createClient();
+		await supabase.from("lobby_players").delete().eq("lobby_id", lobbyId).eq("player_id", playerId);
+
+		await supabase.from("lobby_messages").insert({
+			lobby_id: lobbyId,
+			message: `${playerName} was kicked by admin`,
+			is_system: true,
+		});
+
+		await supabase.from("lobby_messages").insert({
+			lobby_id: lobbyId,
+			message: `KICKED:${playerId}`,
+			is_system: true,
+		});
+	};
+
+	const handleToggleMute = async (playerId: string, playerName: string) => {
+		if (!lobbyId) return;
+
+		const target = players.find(p => p.player_id === playerId);
+		if (!target) return;
+
+		const supabase = createClient();
+
+		const { data: playerData } = await supabase.from("lobby_players").select("is_muted").eq("lobby_id", lobbyId).eq("player_id", playerId).single();
+
+		if (!playerData) return;
+
+		await supabase.from("lobby_players").update({ is_muted: !playerData.is_muted }).eq("lobby_id", lobbyId).eq("player_id", playerId);
+
+		await supabase.from("lobby_messages").insert({
+			lobby_id: lobbyId,
+			message: `${playerName} ${playerData.is_muted ? "unmuted by admin" : "muted by admin"}`,
+			is_system: true,
+		});
+	};
 
 	if (error) {
 		return (
@@ -934,7 +1007,8 @@ export default function MazeGame() {
 				<div>Shift - Sprint</div>
 				<div>Space - Jump</div>
 				<div>Ctrl - Crouch</div>
-				<div>T - Toggle Chat</div>
+				<div>T/Enter - Open Chat</div>
+				<div>ESC - Close Chat</div>
 				<div style={{ marginTop: "10px" }}>Click to lock mouse</div>
 			</div>
 
@@ -942,10 +1016,10 @@ export default function MazeGame() {
 				<div
 					style={{
 						position: "absolute",
-						top: "20px",
-						right: "20px",
-						width: "350px",
-						maxHeight: "500px",
+						bottom: "20px",
+						left: "20px",
+						width: "400px",
+						maxHeight: "450px",
 						background: "rgba(0, 0, 0, 0.85)",
 						borderRadius: "8px",
 						padding: "15px",
@@ -953,9 +1027,17 @@ export default function MazeGame() {
 						flexDirection: "column",
 						gap: "10px",
 						fontFamily: "Arial, sans-serif",
+						border: isChatFocused ? "2px solid #4ECDC4" : "2px solid transparent",
+					}}
+					onClick={() => {
+						if (!isChatFocused) {
+							setIsChatFocused(true);
+							document.exitPointerLock();
+							setTimeout(() => chatInputRef.current?.focus(), 100);
+						}
 					}}
 				>
-					<h3 style={{ margin: 0, color: "white", fontSize: "16px", borderBottom: "1px solid rgba(255,255,255,0.2)", paddingBottom: "8px" }}>Chat</h3>
+					<h3 style={{ margin: 0, color: "white", fontSize: "16px", borderBottom: "1px solid rgba(255,255,255,0.2)", paddingBottom: "8px" }}>Chat {isChatFocused && <span style={{ fontSize: "12px", opacity: 0.7 }}>(ESC to close)</span>}</h3>
 
 					<div
 						style={{
@@ -964,13 +1046,16 @@ export default function MazeGame() {
 							display: "flex",
 							flexDirection: "column",
 							gap: "8px",
-							maxHeight: "350px",
+							maxHeight: "280px",
 						}}
 					>
 						{messages.map(msg => {
 							if (msg.is_system && msg.message.startsWith("KICKED:")) {
 								return null;
 							}
+
+							const msgPlayer = players.find(p => p.player_id === msg.player_id);
+							const showAdminControls = isAdmin && msg.player_id && msg.player_id !== currentPlayerIdRef.current && !msg.is_system;
 
 							return (
 								<div
@@ -979,6 +1064,7 @@ export default function MazeGame() {
 										padding: "6px 10px",
 										borderRadius: "4px",
 										background: msg.is_system ? "rgba(100, 100, 255, 0.2)" : "rgba(255, 255, 255, 0.1)",
+										position: "relative",
 									}}
 								>
 									{msg.is_system ? (
@@ -988,11 +1074,55 @@ export default function MazeGame() {
 										</div>
 									) : (
 										<div>
-											<div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
-												<span style={{ color: "#4ECDC4", fontWeight: "bold", fontSize: "13px" }}>{msg.player_name}</span>
+											<div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px", alignItems: "center" }}>
+												<div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+													<span style={{ color: "#4ECDC4", fontWeight: "bold", fontSize: "13px" }}>{msg.player_name}</span>
+													{msgPlayer?.is_muted && <span style={{ fontSize: "10px", background: "#dc2626", padding: "2px 6px", borderRadius: "3px", color: "white" }}>MUTED</span>}
+												</div>
 												<span style={{ color: "#999", fontSize: "10px" }}>{formatTime(msg.created_at)}</span>
 											</div>
 											<div style={{ color: "white", fontSize: "13px", wordBreak: "break-word" }}>{msg.message}</div>
+
+											{showAdminControls && (
+												<div style={{ display: "flex", gap: "6px", marginTop: "6px" }}>
+													<button
+														onClick={e => {
+															e.stopPropagation();
+															handleToggleMute(msg.player_id!, msg.player_name!);
+														}}
+														style={{
+															padding: "3px 8px",
+															fontSize: "11px",
+															borderRadius: "3px",
+															border: "none",
+															background: msgPlayer?.is_muted ? "#10b981" : "#f59e0b",
+															color: "white",
+															cursor: "pointer",
+															fontWeight: "bold",
+														}}
+													>
+														{msgPlayer?.is_muted ? "Unmute" : "Mute"}
+													</button>
+													<button
+														onClick={e => {
+															e.stopPropagation();
+															handleKickPlayer(msg.player_id!, msg.player_name!);
+														}}
+														style={{
+															padding: "3px 8px",
+															fontSize: "11px",
+															borderRadius: "3px",
+															border: "none",
+															background: "#dc2626",
+															color: "white",
+															cursor: "pointer",
+															fontWeight: "bold",
+														}}
+													>
+														Kick
+													</button>
+												</div>
+											)}
 										</div>
 									)}
 								</div>
@@ -1003,9 +1133,18 @@ export default function MazeGame() {
 
 					<form onSubmit={handleSendMessage} style={{ display: "flex", gap: "8px" }}>
 						<input
+							ref={chatInputRef}
 							type="text"
 							value={messageInput}
 							onChange={e => setMessageInput(e.target.value)}
+							onKeyDown={e => {
+								if (e.key === "Escape") {
+									e.preventDefault();
+									setIsChatFocused(false);
+									setMessageInput("");
+									document.body.requestPointerLock();
+								}
+							}}
 							placeholder={isMuted ? "You are muted" : "Type a message..."}
 							disabled={isMuted}
 							maxLength={200}
