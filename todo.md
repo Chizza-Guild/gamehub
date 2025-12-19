@@ -9,9 +9,15 @@
 
 ### maze
 
--   Fix game ending being glitchy in maze (test if fixed)
+-   Fix game ending being glitchy in maze (test if fixed) - Fix game endings not returning to the lobby
 -   Fix corners being glitchy
 -   Disable ctrl W
+-   Fix chat focus
+
+### unruined
+
+-   Plan game logic
+-   Create the db
 
 ### others
 
