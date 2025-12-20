@@ -41,6 +41,17 @@ type Message = {
 
 const formatTime = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
+function removeCanvas() {
+	let canvas = document.querySelector("canvas");
+
+	if (canvas) {
+		canvas.width = 0;
+		canvas.height = 0;
+		canvas.remove();
+		canvas = null;
+	}
+}
+
 export default function LobbyPage() {
 	const { code } = useParams<{ code: string }>();
 	const router = useRouter();
@@ -77,11 +88,14 @@ export default function LobbyPage() {
 	const sendSystemMessage = async (text: string) => {
 		if (!lobby) return;
 
-		await supabase.from("lobby_messages").insert({
+		const { error } = await supabase.from("lobby_messages").insert({
 			lobby_id: lobby.id,
 			message: text,
 			is_system: true,
 		});
+		if (error) {
+			console.error("Failed to send system message:", error);
+		}
 	};
 
 	const handleMaxPlayersChange = (value: number) => {
@@ -189,6 +203,7 @@ export default function LobbyPage() {
 		if (!code) return;
 
 		const init = async () => {
+			removeCanvas();
 			let playerId = localStorage.getItem("playerId");
 			let playerName = localStorage.getItem("playerName");
 
@@ -435,17 +450,28 @@ export default function LobbyPage() {
 
 	const handleStartGame = async () => {
 		if (!lobby || !gameType || !isAdmin) return;
-
-		if (gameType === "maze" && players.length < 1) return;
 		if (gameType !== "maze" && players.length < 2) return;
+
+		if (gameType === "maze") {
+			await supabase
+				.from("lobbies")
+				.update({
+					game_type: gameType,
+					settings: {
+						...lobby.settings,
+						mazeLayout: undefined, // This resets the maze layout
+					},
+				})
+				.eq("id", lobby.id);
+		} else {
+			await supabase.from("lobbies").update({ game_type: gameType }).eq("id", lobby.id);
+		}
 
 		await supabase.from("lobby_messages").insert({
 			lobby_id: lobby.id,
 			message: `GAME_START:${gameType}`,
 			is_system: true,
 		});
-
-		await supabase.from("lobbies").update({ game_type: gameType }).eq("id", lobby.id);
 
 		router.push(`/games/${gameType}/${code}`);
 	};
@@ -577,7 +603,7 @@ export default function LobbyPage() {
 								</div>
 
 								<button onClick={handleStartGame} disabled={!gameType || players.length < minPlayers} className="button button-success button-full">
-									Start Game {gameType === "maze" && "(Single/Multiplayer)"}
+									Start Game
 								</button>
 							</div>
 						) : (

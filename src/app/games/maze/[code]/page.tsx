@@ -103,6 +103,17 @@ function getRandomColor() {
 	return colors[Math.floor(Math.random() * colors.length)];
 }
 
+function removeCanvas() {
+	let canvas = document.querySelector("canvas");
+
+	if (canvas) {
+		canvas.width = 0;
+		canvas.height = 0;
+		canvas.remove();
+		canvas = null;
+	}
+}
+
 const formatTime = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 export default function MazeGame() {
@@ -149,6 +160,17 @@ export default function MazeGame() {
 	useEffect(scrollToBottom, [messages]);
 
 	useEffect(() => {
+		const handleKeyDown = (e: KeyboardEvent) => {
+			if (e.key === "w" && (e.ctrlKey || e.metaKey)) {
+				e.preventDefault();
+			}
+		};
+
+		window.addEventListener("keydown", handleKeyDown);
+		return () => window.removeEventListener("keydown", handleKeyDown);
+	}, []);
+
+	useEffect(() => {
 		if (!code) {
 			router.push("/");
 			return;
@@ -160,6 +182,7 @@ export default function MazeGame() {
 
 		const init = async () => {
 			try {
+				removeCanvas();
 				const playerId = localStorage.getItem("playerId");
 				const playerName = localStorage.getItem("playerName");
 
@@ -502,9 +525,25 @@ export default function MazeGame() {
 				const raycaster = new THREE.Raycaster();
 
 				function canMove(newPos: THREE.Vector3, moveDir: THREE.Vector3): { canMove: boolean; slideVector: THREE.Vector3 | null } {
-					const directions = [new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1), new THREE.Vector3(0.707, 0, 0.707), new THREE.Vector3(-0.707, 0, 0.707), new THREE.Vector3(0.707, 0, -0.707), new THREE.Vector3(-0.707, 0, -0.707)];
-
-					const radius = 0.5;
+					const directions = [
+						new THREE.Vector3(1, 0, 0),
+						new THREE.Vector3(-1, 0, 0),
+						new THREE.Vector3(0, 0, 1),
+						new THREE.Vector3(0, 0, -1),
+						new THREE.Vector3(0.707, 0, 0.707),
+						new THREE.Vector3(-0.707, 0, 0.707),
+						new THREE.Vector3(0.707, 0, -0.707),
+						new THREE.Vector3(-0.707, 0, -0.707),
+						new THREE.Vector3(0.383, 0, 0.924),
+						new THREE.Vector3(-0.383, 0, 0.924),
+						new THREE.Vector3(0.383, 0, -0.924),
+						new THREE.Vector3(-0.383, 0, -0.924),
+						new THREE.Vector3(0.924, 0, 0.383),
+						new THREE.Vector3(-0.924, 0, 0.383),
+						new THREE.Vector3(0.924, 0, -0.383),
+						new THREE.Vector3(-0.924, 0, -0.383),
+					];
+					const radius = 0.6;
 					let closestHit = null;
 					let minDistance = Infinity;
 
