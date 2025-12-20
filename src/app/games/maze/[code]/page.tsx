@@ -160,14 +160,19 @@ export default function MazeGame() {
 	useEffect(scrollToBottom, [messages]);
 
 	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if (e.key === "w" && (e.ctrlKey || e.metaKey)) {
-				e.preventDefault();
+		const onUnload = () => {
+			if (document.pointerLockElement) {
+				document.exitPointerLock();
 			}
 		};
 
-		window.addEventListener("keydown", handleKeyDown);
-		return () => window.removeEventListener("keydown", handleKeyDown);
+		window.addEventListener("pagehide", onUnload);
+		window.addEventListener("beforeunload", onUnload);
+
+		return () => {
+			window.removeEventListener("pagehide", onUnload);
+			window.removeEventListener("beforeunload", onUnload);
+		};
 	}, []);
 
 	useEffect(() => {

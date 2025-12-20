@@ -6,12 +6,12 @@
 
 -   Fix the mouse request thingy on other pages
 -   Fix join lobby not appearing in localhost (Needs restart, also games load twice/same page)
+-   System messages get error 400
 
 ### maze
 
--   Fix game ending being glitchy in maze (test if fixed) - Fix game endings not returning to the lobby
--   Fix corners being glitchy
--   Disable ctrl W
+-   Fix game ending being glitchy in maze (test if fixed)
+-   Fix game endings not returning to the lobby
 -   Fix chat focus
 
 ### unruined
