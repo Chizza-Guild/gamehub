@@ -4,28 +4,24 @@
 
 ### lobby
 
--   Fix the mouse request thingy on other pages
--   Fix join lobby not appearing in localhost (Needs restart, also games load twice/same page)
--   System messages get error 400
+-   Fix the mouse request thingy on other pages STILL DOESNT WORK
 
 ### maze
 
--   Fix game ending being glitchy in maze (test if fixed)
--   Fix game endings not returning to the lobby
 -   Fix chat focus
 
 ### unruined
 
--   Plan game logic
 -   Create the db
+-   Move planned stuff here
 
 ### others
 
 -   Remove unnecessary files to clean up code
 -   Merge pinks db tables to main
 -   Add selectable profile pictures using supabase bucket
--   Start doing ruined & unruined for chizza party
 -   Create RLS for all DB's
+-   Move is_system column into player_id column, just use "system" as string
 
 ## Future Ideas
 
@@ -33,7 +29,6 @@ What to do:
 
 -   Snake
 -   Pong (Ai to start)
--   Tic tac toe
 -   Connect 4
 -   Flappy bird
 -   2048
