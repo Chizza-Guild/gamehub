@@ -79,6 +79,15 @@ export default function LobbyPage() {
 	const isPrivateDebounceRef = useRef<NodeJS.Timeout | null>(null);
 	const mazeSizeDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
+	let minPlayers: number;
+	if (gameType == "maze") {
+		minPlayers = 1;
+	} else if (gameType == "ruined") {
+		minPlayers = 4;
+	} else {
+		minPlayers = 2;
+	}
+
 	const scrollToBottom = () => {
 		messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
 	};
@@ -128,7 +137,28 @@ export default function LobbyPage() {
 					},
 				};
 			});
+			await sendSystemMessage(`Player cap changed to: ${value}`);
 		}, 500);
+	};
+
+	const handleGameTypeChange = async (value: string) => {
+		setGameType(value);
+
+		if (!lobby) return;
+
+		await supabase.from("lobbies").update({ game_type: value }).eq("id", lobby.id);
+
+		setLobby(prev => {
+			if (!prev) return prev;
+			return {
+				...prev,
+				game_type: value,
+			};
+		});
+
+		if (value) {
+			await sendSystemMessage(`Game type changed to: ${value.charAt(0).toUpperCase() + value.slice(1)}`);
+		}
 	};
 
 	const handlePrivateChange = (value: boolean) => {
@@ -161,6 +191,8 @@ export default function LobbyPage() {
 					},
 				};
 			});
+
+			await sendSystemMessage(`Lobby mode changed to ${value ? "private" : "public"}.`);
 		}, 500);
 	};
 
@@ -196,6 +228,7 @@ export default function LobbyPage() {
 					},
 				};
 			});
+			await sendSystemMessage(`Maze size changed to: ${value}x${value}`);
 		}, 500);
 	};
 
@@ -450,7 +483,10 @@ export default function LobbyPage() {
 
 	const handleStartGame = async () => {
 		if (!lobby || !gameType || !isAdmin) return;
-		if (gameType !== "maze" && players.length < 2) return;
+
+		if (minPlayers > players.length) {
+			return;
+		}
 
 		if (gameType === "maze") {
 			await supabase
@@ -478,8 +514,6 @@ export default function LobbyPage() {
 
 	if (loading) return <div className="lobby-container">Loading…</div>;
 	if (error || !lobby) return <div className="lobby-container">{error}</div>;
-
-	const minPlayers = gameType === "maze" ? 1 : 2;
 
 	return (
 		<div className="lobby-container">
@@ -571,11 +605,12 @@ export default function LobbyPage() {
 							<div className="settings-container">
 								<div className="form-group">
 									<label className="form-label">Game Type</label>
-									<select value={gameType} onChange={e => setGameType(e.target.value)} className="form-select">
+									<select value={gameType} onChange={e => handleGameTypeChange(e.target.value)} className="form-select">
 										<option value="">Select a game...</option>
 										<option value="dance">Dance</option>
 										<option value="tictactoe">Tic Tac Toe</option>
 										<option value="maze">Maze</option>
+										<option value="ruined">Ruined & Unruined</option>
 									</select>
 								</div>
 
@@ -609,12 +644,10 @@ export default function LobbyPage() {
 						) : (
 							<div className="waiting-container">
 								<p className="waiting-message">Waiting for the admin to configure the game...</p>
-								{gameType && (
-									<div className="selected-game">
-										<p className="selected-game-label">Selected Game:</p>
-										<p className="selected-game-name">{gameType.replace("_", " ")}</p>
-									</div>
-								)}
+								<div className="selected-game">
+									<p className="selected-game-label">Selected Game:</p>
+									<p className="selected-game-name">{gameType.replace("_", " ")}</p>
+								</div>
 							</div>
 						)}
 					</div>

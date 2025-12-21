@@ -183,9 +183,7 @@ export default function Home() {
 				<Link href="/games/tictactoe" className="p-6 bg-gray-800 rounded-lg">
 					🎮 Tic Tac Toe
 				</Link>
-			</div>
-			<div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-4xl">
-				<Link href="/games/tshirt" className="p-6 bg-gray-800 rounded-lg">
+                <Link href="/games/tshirt" className="p-6 bg-gray-800 rounded-lg">
 					TShirtGametest
 				</Link>
 			</div>
