@@ -50,6 +50,7 @@ function removeCanvas() {
 		canvas.remove();
 		canvas = null;
 	}
+	document.exitPointerLock();
 }
 
 export default function LobbyPage() {

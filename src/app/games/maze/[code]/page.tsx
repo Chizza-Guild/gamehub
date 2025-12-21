@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase-client";
 import * as THREE from "three";
+import ChatBox from "../../../chatbox";
 
 type PlayerPosition = {
 	player_id: string;
@@ -114,8 +115,6 @@ function removeCanvas() {
 	}
 }
 
-const formatTime = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-
 export default function MazeGame() {
 	const { code } = useParams<{ code: string }>();
 	const router = useRouter();
@@ -127,10 +126,8 @@ export default function MazeGame() {
 	const [waitingForMaze, setWaitingForMaze] = useState(false);
 	const [messages, setMessages] = useState<Message[]>([]);
 	const [messageInput, setMessageInput] = useState("");
-	const [isChatVisible, setIsChatVisible] = useState(true);
 	const [isChatFocused, setIsChatFocused] = useState(false);
 	const [players, setPlayers] = useState<Player[]>([]);
-	const chatInputRef = useRef<HTMLInputElement | null>(null);
 
 	const sceneRef = useRef<THREE.Scene | null>(null);
 	const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -151,29 +148,6 @@ export default function MazeGame() {
 	const messagesChannelRef = useRef<any>(null);
 	const playersChannelRef = useRef<any>(null);
 	const gameEndedRef = useRef<boolean>(false);
-	const messagesEndRef = useRef<HTMLDivElement | null>(null);
-
-	const scrollToBottom = () => {
-		messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-	};
-
-	useEffect(scrollToBottom, [messages]);
-
-	useEffect(() => {
-		const onUnload = () => {
-			if (document.pointerLockElement) {
-				document.exitPointerLock();
-			}
-		};
-
-		window.addEventListener("pagehide", onUnload);
-		window.addEventListener("beforeunload", onUnload);
-
-		return () => {
-			window.removeEventListener("pagehide", onUnload);
-			window.removeEventListener("beforeunload", onUnload);
-		};
-	}, []);
 
 	useEffect(() => {
 		if (!code) {
@@ -487,13 +461,14 @@ export default function MazeGame() {
 						e.preventDefault();
 						setIsChatFocused(true);
 						document.exitPointerLock();
-						setTimeout(() => chatInputRef.current?.focus(), 100);
 					}
 				};
+
 				const onKeyUp = (e: KeyboardEvent) => {
 					if (isChatFocused) return;
 					keys[e.key] = false;
 				};
+                
 				document.addEventListener("keydown", onKeyDown);
 				document.addEventListener("keyup", onKeyUp);
 
@@ -833,6 +808,10 @@ export default function MazeGame() {
 					mounted = false;
 					cancelAnimationFrame(animationId);
 
+					if (document.pointerLockElement) {
+						document.exitPointerLock();
+					}
+
 					document.removeEventListener("keydown", onKeyDown);
 					document.removeEventListener("keyup", onKeyUp);
 					document.removeEventListener("mousemove", onMouseMove);
@@ -879,7 +858,7 @@ export default function MazeGame() {
 				lobbyChannelRef.current.unsubscribe();
 			}
 		};
-	}, [code, router]);
+	}, [code, router, isChatFocused]);
 
 	const handleSendMessage = async (e: React.FormEvent) => {
 		e.preventDefault();
@@ -944,6 +923,15 @@ export default function MazeGame() {
 			message: `${playerName} ${playerData.is_muted ? "unmuted by admin" : "muted by admin"}`,
 			is_system: true,
 		});
+	};
+
+	const handleChatFocusChange = (focused: boolean) => {
+		setIsChatFocused(focused);
+		if (focused) {
+			document.exitPointerLock();
+		} else {
+			document.body.requestPointerLock();
+		}
 	};
 
 	if (error) {
@@ -1056,173 +1044,7 @@ export default function MazeGame() {
 				<div style={{ marginTop: "10px" }}>Click to lock mouse</div>
 			</div>
 
-			{isChatVisible && (
-				<div
-					style={{
-						position: "absolute",
-						bottom: "20px",
-						left: "20px",
-						width: "400px",
-						maxHeight: "450px",
-						background: "rgba(0, 0, 0, 0.85)",
-						borderRadius: "8px",
-						padding: "15px",
-						display: "flex",
-						flexDirection: "column",
-						gap: "10px",
-						fontFamily: "Arial, sans-serif",
-						border: isChatFocused ? "2px solid #4ECDC4" : "2px solid transparent",
-					}}
-					onClick={() => {
-						if (!isChatFocused) {
-							setIsChatFocused(true);
-							document.exitPointerLock();
-							setTimeout(() => chatInputRef.current?.focus(), 100);
-						}
-					}}
-				>
-					<h3 style={{ margin: 0, color: "white", fontSize: "16px", borderBottom: "1px solid rgba(255,255,255,0.2)", paddingBottom: "8px" }}>Chat {isChatFocused && <span style={{ fontSize: "12px", opacity: 0.7 }}>(ESC to close)</span>}</h3>
-
-					<div
-						style={{
-							flex: 1,
-							overflowY: "auto",
-							display: "flex",
-							flexDirection: "column",
-							gap: "8px",
-							maxHeight: "280px",
-						}}
-					>
-						{messages.map(msg => {
-							if (msg.is_system && msg.message.startsWith("KICKED:")) {
-								return null;
-							}
-
-							const msgPlayer = players.find(p => p.player_id === msg.player_id);
-							const showAdminControls = isAdmin && msg.player_id && msg.player_id !== currentPlayerIdRef.current && !msg.is_system;
-
-							return (
-								<div
-									key={msg.id}
-									style={{
-										padding: "6px 10px",
-										borderRadius: "4px",
-										background: msg.is_system ? "rgba(100, 100, 255, 0.2)" : "rgba(255, 255, 255, 0.1)",
-										position: "relative",
-									}}
-								>
-									{msg.is_system ? (
-										<div style={{ fontSize: "12px", color: "#aaf", fontStyle: "italic" }}>
-											{msg.message}
-											<span style={{ marginLeft: "8px", opacity: 0.6, fontSize: "10px" }}>{formatTime(msg.created_at)}</span>
-										</div>
-									) : (
-										<div>
-											<div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px", alignItems: "center" }}>
-												<div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-													<span style={{ color: "#4ECDC4", fontWeight: "bold", fontSize: "13px" }}>{msg.player_name}</span>
-													{msgPlayer?.is_muted && <span style={{ fontSize: "10px", background: "#dc2626", padding: "2px 6px", borderRadius: "3px", color: "white" }}>MUTED</span>}
-												</div>
-												<span style={{ color: "#999", fontSize: "10px" }}>{formatTime(msg.created_at)}</span>
-											</div>
-											<div style={{ color: "white", fontSize: "13px", wordBreak: "break-word" }}>{msg.message}</div>
-
-											{showAdminControls && (
-												<div style={{ display: "flex", gap: "6px", marginTop: "6px" }}>
-													<button
-														onClick={e => {
-															e.stopPropagation();
-															handleToggleMute(msg.player_id!, msg.player_name!);
-														}}
-														style={{
-															padding: "3px 8px",
-															fontSize: "11px",
-															borderRadius: "3px",
-															border: "none",
-															background: msgPlayer?.is_muted ? "#10b981" : "#f59e0b",
-															color: "white",
-															cursor: "pointer",
-															fontWeight: "bold",
-														}}
-													>
-														{msgPlayer?.is_muted ? "Unmute" : "Mute"}
-													</button>
-													<button
-														onClick={e => {
-															e.stopPropagation();
-															handleKickPlayer(msg.player_id!, msg.player_name!);
-														}}
-														style={{
-															padding: "3px 8px",
-															fontSize: "11px",
-															borderRadius: "3px",
-															border: "none",
-															background: "#dc2626",
-															color: "white",
-															cursor: "pointer",
-															fontWeight: "bold",
-														}}
-													>
-														Kick
-													</button>
-												</div>
-											)}
-										</div>
-									)}
-								</div>
-							);
-						})}
-						<div ref={messagesEndRef} />
-					</div>
-
-					<form onSubmit={handleSendMessage} style={{ display: "flex", gap: "8px" }}>
-						<input
-							ref={chatInputRef}
-							type="text"
-							value={messageInput}
-							onChange={e => setMessageInput(e.target.value)}
-							onKeyDown={e => {
-								if (e.key === "Escape") {
-									e.preventDefault();
-									setIsChatFocused(false);
-									setMessageInput("");
-									document.body.requestPointerLock();
-								}
-							}}
-							placeholder={isMuted ? "You are muted" : "Type a message..."}
-							disabled={isMuted}
-							maxLength={200}
-							style={{
-								flex: 1,
-								padding: "8px 12px",
-								borderRadius: "4px",
-								border: "1px solid rgba(255,255,255,0.3)",
-								background: "rgba(255,255,255,0.1)",
-								color: "white",
-								fontSize: "13px",
-							}}
-						/>
-						<button
-							type="submit"
-							disabled={!messageInput.trim() || isMuted}
-							style={{
-								padding: "8px 16px",
-								borderRadius: "4px",
-								border: "none",
-								background: !messageInput.trim() || isMuted ? "#555" : "#4ECDC4",
-								color: "white",
-								cursor: !messageInput.trim() || isMuted ? "not-allowed" : "pointer",
-								fontSize: "13px",
-								fontWeight: "bold",
-							}}
-						>
-							Send
-						</button>
-					</form>
-
-					{isMuted && <p style={{ margin: 0, color: "#ff6b6b", fontSize: "12px", textAlign: "center" }}>You have been muted by the admin</p>}
-				</div>
-			)}
+			<ChatBox messages={messages} players={players} currentPlayerId={currentPlayerIdRef.current} isChatFocused={isChatFocused} messageInput={messageInput} isMuted={isMuted} isAdmin={isAdmin} onChatFocusChange={handleChatFocusChange} onMessageInputChange={setMessageInput} onSendMessage={handleSendMessage} onToggleMute={handleToggleMute} onKickPlayer={handleKickPlayer} />
 		</div>
 	);
 }
