@@ -63,6 +63,7 @@ export default function RuinedGame() {
 	const [selectedVote, setSelectedVote] = useState<string | null>(null);
 	const [hasVoted, setHasVoted] = useState(false);
 	const [showLeaderboard, setShowLeaderboard] = useState(false);
+	const [hasSubmitted, setHasSubmitted] = useState(false);
 
 	const currentPlayerIdRef = useRef<string | null>(null);
 	const currentPlayerNameRef = useRef<string | null>(null);
@@ -70,6 +71,7 @@ export default function RuinedGame() {
 	const messagesChannelRef = useRef<any>(null);
 	const timerRef = useRef<NodeJS.Timeout | null>(null);
 	const usedPromptsRef = useRef<Set<string>>(new Set());
+	const isAdminRef = useRef<boolean>(false);
 
 	useEffect(() => {
 		if (!code) {
@@ -79,10 +81,12 @@ export default function RuinedGame() {
 
 		const init = async () => {
 			try {
+				console.log("[RUINED] Initializing game...");
 				const playerId = localStorage.getItem("playerId");
 				const playerName = localStorage.getItem("playerName");
 
 				if (!playerId || !playerName) {
+					console.error("[RUINED] Player info not found");
 					setError("Player info not found");
 					router.push("/");
 					return;
@@ -90,19 +94,23 @@ export default function RuinedGame() {
 
 				currentPlayerIdRef.current = playerId;
 				currentPlayerNameRef.current = playerName;
+				console.log("[RUINED] Player:", playerName, playerId);
 
 				const { data: lobbyData, error: lobbyError } = await supabase.from("lobbies").select("id, settings").eq("code", code).single();
 
 				if (lobbyError || !lobbyData) {
+					console.error("[RUINED] Lobby not found:", lobbyError);
 					setError("Lobby not found");
 					router.push("/");
 					return;
 				}
 
+				console.log("[RUINED] Lobby found:", lobbyData.id);
 				setLobbyId(lobbyData.id);
 
 				const { data: playersData } = await supabase.from("lobby_players").select("player_id, name, is_admin").eq("lobby_id", lobbyData.id);
 
+				console.log("[RUINED] Players loaded:", playersData?.length);
 				setPlayers(playersData || []);
 
 				const { data: messagesData } = await supabase.from("lobby_messages").select("*").eq("lobby_id", lobbyData.id).order("created_at");
@@ -112,8 +120,11 @@ export default function RuinedGame() {
 				const { data: playerData } = await supabase.from("lobby_players").select("is_admin").eq("lobby_id", lobbyData.id).eq("player_id", playerId).single();
 
 				const isAdmin = playerData?.is_admin || false;
+				isAdminRef.current = isAdmin;
+				console.log("[RUINED] Is admin:", isAdmin);
 
 				if (isAdmin) {
+					console.log("[RUINED] Admin initializing game...");
 					await initializeGame(lobbyData.id, playersData || []);
 				}
 
@@ -132,23 +143,40 @@ export default function RuinedGame() {
 							setMessages(prev => [...prev, message].slice(-200));
 
 							if (message.is_system && message.message.startsWith("GAME_STATE:")) {
-								const stateData = JSON.parse(message.message.replace("GAME_STATE:", ""));
-								setGameState(stateData);
-								setHasVoted(false);
-								setSelectedVote(null);
+								try {
+									const stateData = JSON.parse(message.message.replace("GAME_STATE:", ""));
+									console.log("[RUINED] Game state update:", stateData.phase, "Round:", stateData.round, "Time:", stateData.timeLeft);
+									setGameState(stateData);
+									setHasVoted(false);
+									setSelectedVote(null);
+									setHasSubmitted(false);
+								} catch (e) {
+									console.error("[RUINED] Failed to parse game state:", e);
+								}
 							}
 
 							if (message.is_system && message.message.startsWith("VOTING_PROMPTS:")) {
-								const promptsData = JSON.parse(message.message.replace("VOTING_PROMPTS:", ""));
-								setVotingPrompts(promptsData);
+								try {
+									const promptsData = JSON.parse(message.message.replace("VOTING_PROMPTS:", ""));
+									console.log("[RUINED] Voting prompts received:", promptsData.length);
+									setVotingPrompts(promptsData);
+								} catch (e) {
+									console.error("[RUINED] Failed to parse voting prompts:", e);
+								}
 							}
 
 							if (message.is_system && message.message.startsWith("LEADERBOARD:")) {
-								const leaderboardData = JSON.parse(message.message.replace("LEADERBOARD:", ""));
-								setLeaderboard(leaderboardData);
+								try {
+									const leaderboardData = JSON.parse(message.message.replace("LEADERBOARD:", ""));
+									console.log("[RUINED] Leaderboard update:", leaderboardData.length, "players");
+									setLeaderboard(leaderboardData);
+								} catch (e) {
+									console.error("[RUINED] Failed to parse leaderboard:", e);
+								}
 							}
 
 							if (message.is_system && message.message === "GAME_END") {
+								console.log("[RUINED] Game ended, redirecting to lobby...");
 								setTimeout(() => router.push(`/lobby/${code}`), 15000);
 							}
 						}
@@ -166,14 +194,16 @@ export default function RuinedGame() {
 							filter: `lobby_id=eq.${lobbyData.id}`,
 						},
 						() => {
+							console.log("[RUINED] Ruined table updated");
 							fetchLeaderboard(lobbyData.id);
 						}
 					)
 					.subscribe();
 
 				setLoading(false);
+				console.log("[RUINED] Initialization complete");
 			} catch (err) {
-				console.error("Init error:", err);
+				console.error("[RUINED] Init error:", err);
 				setError(err instanceof Error ? err.message : String(err));
 			}
 		};
@@ -181,6 +211,7 @@ export default function RuinedGame() {
 		init();
 
 		return () => {
+			console.log("[RUINED] Cleaning up...");
 			channelRef.current?.unsubscribe();
 			messagesChannelRef.current?.unsubscribe();
 			if (timerRef.current) clearTimeout(timerRef.current);
@@ -188,20 +219,27 @@ export default function RuinedGame() {
 	}, [code, router]);
 
 	const initializeGame = async (lobbyId: number, players: Player[]) => {
+		console.log("[RUINED] Initializing game for", players.length, "players");
 		const totalRounds = players.length;
-		const firstPrompt = getRandomPrompt();
 
 		const pairs = createPairs(players);
+		console.log("[RUINED] Created", pairs.length, "pairs");
 
 		for (const pair of pairs) {
 			const prompt = getRandomPrompt();
-			await supabase.from("ruined").insert({
+			console.log("[RUINED] Assigning prompt to pair:", prompt);
+
+			const { error } = await supabase.from("ruined").insert({
 				lobby_id: lobbyId,
 				player_id: "SYSTEM",
 				round_id: 1,
 				modified_prompt: prompt,
 				acquired_points: 0,
 			});
+
+			if (error) {
+				console.error("[RUINED] Failed to insert system prompt:", error);
+			}
 
 			await supabase.from("lobby_messages").insert({
 				lobby_id: lobbyId,
@@ -210,6 +248,7 @@ export default function RuinedGame() {
 			});
 		}
 
+		const firstPrompt = getRandomPrompt();
 		const initialState: GameState = {
 			phase: "ruin",
 			round: 1,
@@ -219,13 +258,15 @@ export default function RuinedGame() {
 			pairPlayerId: null,
 		};
 
+		console.log("[RUINED] Starting game with state:", initialState);
+
 		await supabase.from("lobby_messages").insert({
 			lobby_id: lobbyId,
 			message: `GAME_STATE:${JSON.stringify(initialState)}`,
 			is_system: true,
 		});
 
-		startTimer(lobbyId, initialState);
+		startTimer(lobbyId, initialState, players);
 	};
 
 	const createPairs = (players: Player[]): Player[][] => {
@@ -254,34 +295,52 @@ export default function RuinedGame() {
 		return prompt;
 	};
 
-	const startTimer = async (lobbyId: number, state: GameState) => {
+	const startTimer = async (lobbyId: number, state: GameState, playersList: Player[]) => {
 		if (timerRef.current) clearTimeout(timerRef.current);
 
+		console.log("[RUINED] Timer tick - Phase:", state.phase, "Time left:", state.timeLeft);
+
 		if (state.timeLeft <= 0) {
-			await handlePhaseTransition(lobbyId, state);
+			console.log("[RUINED] Time's up! Transitioning phase...");
+			await handlePhaseTransition(lobbyId, state, playersList);
 			return;
 		}
 
 		timerRef.current = setTimeout(async () => {
 			const newState = { ...state, timeLeft: state.timeLeft - 1 };
-			await supabase.from("lobby_messages").insert({
+
+			const { error } = await supabase.from("lobby_messages").insert({
 				lobby_id: lobbyId,
 				message: `GAME_STATE:${JSON.stringify(newState)}`,
 				is_system: true,
 			});
-			startTimer(lobbyId, newState);
+
+			if (error) {
+				console.error("[RUINED] Failed to update game state:", error);
+			}
+
+			startTimer(lobbyId, newState, playersList);
 		}, 1000);
 	};
 
-	const handlePhaseTransition = async (lobbyId: number, state: GameState) => {
-		const currentPlayer = players.find(p => p.player_id === currentPlayerIdRef.current);
-		if (!currentPlayer?.is_admin) return;
+	const handlePhaseTransition = async (lobbyId: number, state: GameState, playersList: Player[]) => {
+		if (!isAdminRef.current) {
+			console.log("[RUINED] Not admin, skipping phase transition");
+			return;
+		}
 
+		console.log("[RUINED] Phase transition from:", state.phase);
 		let newState: GameState;
 
 		switch (state.phase) {
 			case "ruin":
-				const { data: ruinedPrompts } = await supabase.from("ruined").select("*").eq("lobby_id", lobbyId).eq("round_id", state.round).neq("player_id", "SYSTEM");
+				console.log("[RUINED] Transitioning to ruin_voting");
+				const { data: ruinedPrompts, error: ruinError } = await supabase.from("ruined").select("*").eq("lobby_id", lobbyId).eq("round_id", state.round).neq("player_id", "SYSTEM");
+
+				console.log("[RUINED] Found", ruinedPrompts?.length || 0, "ruined prompts");
+				if (ruinError) {
+					console.error("[RUINED] Error fetching ruined prompts:", ruinError);
+				}
 
 				await supabase.from("lobby_messages").insert({
 					lobby_id: lobbyId,
@@ -297,7 +356,9 @@ export default function RuinedGame() {
 				break;
 
 			case "ruin_voting":
+				console.log("[RUINED] Transitioning to unruin");
 				await calculateVotingResults(lobbyId, state.round, "ruin");
+
 				newState = {
 					...state,
 					phase: "unruin",
@@ -306,7 +367,13 @@ export default function RuinedGame() {
 				break;
 
 			case "unruin":
-				const { data: unruinedPrompts } = await supabase.from("ruined").select("*").eq("lobby_id", lobbyId).eq("round_id", state.round).neq("player_id", "SYSTEM");
+				console.log("[RUINED] Transitioning to unruin_voting");
+				const { data: unruinedPrompts, error: unruinError } = await supabase.from("ruined").select("*").eq("lobby_id", lobbyId).eq("round_id", state.round).neq("player_id", "SYSTEM");
+
+				console.log("[RUINED] Found", unruinedPrompts?.length || 0, "unruined prompts");
+				if (unruinError) {
+					console.error("[RUINED] Error fetching unruined prompts:", unruinError);
+				}
 
 				await supabase.from("lobby_messages").insert({
 					lobby_id: lobbyId,
@@ -322,16 +389,19 @@ export default function RuinedGame() {
 				break;
 
 			case "unruin_voting":
+				console.log("[RUINED] Calculating unruin voting results");
 				await calculateVotingResults(lobbyId, state.round, "unruin");
 				await fetchLeaderboard(lobbyId);
 
 				if (state.round >= state.totalRounds) {
+					console.log("[RUINED] Final round complete");
 					newState = {
 						...state,
 						phase: "final",
 						timeLeft: 15,
 					};
 				} else {
+					console.log("[RUINED] Moving to leaderboard");
 					newState = {
 						...state,
 						phase: "leaderboard",
@@ -341,6 +411,7 @@ export default function RuinedGame() {
 				break;
 
 			case "leaderboard":
+				console.log("[RUINED] Starting next round");
 				newState = {
 					...state,
 					phase: "ruin",
@@ -350,6 +421,7 @@ export default function RuinedGame() {
 				break;
 
 			case "final":
+				console.log("[RUINED] Game ending");
 				await supabase.from("lobby_messages").insert({
 					lobby_id: lobbyId,
 					message: "GAME_END",
@@ -358,20 +430,36 @@ export default function RuinedGame() {
 				return;
 
 			default:
+				console.warn("[RUINED] Unknown phase:", state.phase);
 				return;
 		}
 
-		await supabase.from("lobby_messages").insert({
+		console.log("[RUINED] New state:", newState);
+
+		const { error } = await supabase.from("lobby_messages").insert({
 			lobby_id: lobbyId,
 			message: `GAME_STATE:${JSON.stringify(newState)}`,
 			is_system: true,
 		});
 
-		startTimer(lobbyId, newState);
+		if (error) {
+			console.error("[RUINED] Failed to update game state:", error);
+		}
+
+		startTimer(lobbyId, newState, playersList);
 	};
 
 	const calculateVotingResults = async (lobbyId: number, round: number, type: string) => {
-		const { data: votes } = await supabase.from("lobby_messages").select("message").eq("lobby_id", lobbyId).like("message", `VOTE:${round}:${type}:%`);
+		console.log("[RUINED] Calculating voting results for round", round, type);
+
+		const { data: votes, error } = await supabase.from("lobby_messages").select("message").eq("lobby_id", lobbyId).like("message", `VOTE:${round}:${type}:%`);
+
+		if (error) {
+			console.error("[RUINED] Error fetching votes:", error);
+			return;
+		}
+
+		console.log("[RUINED] Found", votes?.length || 0, "votes");
 
 		const voteCounts: Record<string, number> = {};
 
@@ -379,13 +467,18 @@ export default function RuinedGame() {
 			const parts = v.message.split(":");
 			const votedId = parts[3];
 			voteCounts[votedId] = (voteCounts[votedId] || 0) + 1;
+			console.log("[RUINED] Vote for player:", votedId);
 		});
 
 		const entries = Object.entries(voteCounts);
-		if (entries.length === 0) return;
+		if (entries.length === 0) {
+			console.log("[RUINED] No votes to process");
+			return;
+		}
 
 		const maxVotes = Math.max(...entries.map(([_, count]) => count));
 		const winners = entries.filter(([_, count]) => count === maxVotes);
+		console.log("[RUINED] Winners:", winners.length, "with", maxVotes, "votes");
 
 		for (const [playerId, voteCount] of entries) {
 			let points = voteCount * 3;
@@ -396,23 +489,37 @@ export default function RuinedGame() {
 				points += 2;
 			}
 
+			console.log("[RUINED] Player", playerId, "gets", points, "points");
+
 			const { data: existing } = await supabase.from("ruined").select("acquired_points").eq("lobby_id", lobbyId).eq("player_id", playerId).eq("round_id", round).single();
 
 			if (existing) {
-				await supabase
-					.from("ruined")
-					.update({ acquired_points: existing.acquired_points + points })
-					.eq("lobby_id", lobbyId)
-					.eq("player_id", playerId)
-					.eq("round_id", round);
+				const newPoints = existing.acquired_points + points;
+				console.log("[RUINED] Updating player", playerId, "points to", newPoints);
+
+				const { error: updateError } = await supabase.from("ruined").update({ acquired_points: newPoints }).eq("lobby_id", lobbyId).eq("player_id", playerId).eq("round_id", round);
+
+				if (updateError) {
+					console.error("[RUINED] Failed to update points:", updateError);
+				}
 			}
 		}
 	};
 
 	const fetchLeaderboard = async (lobbyId: number) => {
-		const { data } = await supabase.from("ruined").select("player_id, acquired_points").eq("lobby_id", lobbyId).neq("player_id", "SYSTEM");
+		console.log("[RUINED] Fetching leaderboard");
 
-		if (!data) return;
+		const { data, error } = await supabase.from("ruined").select("player_id, acquired_points").eq("lobby_id", lobbyId).neq("player_id", "SYSTEM");
+
+		if (error) {
+			console.error("[RUINED] Error fetching leaderboard:", error);
+			return;
+		}
+
+		if (!data) {
+			console.log("[RUINED] No leaderboard data");
+			return;
+		}
 
 		const totals: Record<string, number> = {};
 		data.forEach(entry => {
@@ -430,6 +537,7 @@ export default function RuinedGame() {
 			})
 			.sort((a, b) => b.total_points - a.total_points);
 
+		console.log("[RUINED] Leaderboard:", leaderboardData);
 		setLeaderboard(leaderboardData);
 
 		await supabase.from("lobby_messages").insert({
@@ -440,9 +548,11 @@ export default function RuinedGame() {
 	};
 
 	const handleSubmitPrompt = async () => {
-		if (!lobbyId || !gameState || !modifiedPrompt.trim()) return;
+		if (!lobbyId || !gameState || !modifiedPrompt.trim() || hasSubmitted) return;
 
-		await supabase.from("ruined").insert({
+		console.log("[RUINED] Submitting prompt:", modifiedPrompt.substring(0, 50));
+
+		const { error } = await supabase.from("ruined").insert({
 			lobby_id: lobbyId,
 			player_id: currentPlayerIdRef.current!,
 			round_id: gameState.round,
@@ -450,25 +560,43 @@ export default function RuinedGame() {
 			acquired_points: 0,
 		});
 
+		if (error) {
+			console.error("[RUINED] Failed to submit prompt:", error);
+			return;
+		}
+
+		console.log("[RUINED] Prompt submitted successfully");
 		setModifiedPrompt("");
+		setHasSubmitted(true);
 	};
 
 	const handleVote = async (promptId: string) => {
 		if (!lobbyId || !gameState || hasVoted) return;
 
 		const votedPrompt = votingPrompts.find(p => p.id === promptId);
-		if (votedPrompt?.player_id === currentPlayerIdRef.current) return;
+		if (votedPrompt?.player_id === currentPlayerIdRef.current) {
+			console.log("[RUINED] Cannot vote for own prompt");
+			return;
+		}
+
+		console.log("[RUINED] Voting for prompt:", promptId);
 
 		setSelectedVote(promptId);
 		setHasVoted(true);
 
 		const voteType = gameState.phase === "ruin_voting" ? "ruin" : "unruin";
 
-		await supabase.from("lobby_messages").insert({
+		const { error } = await supabase.from("lobby_messages").insert({
 			lobby_id: lobbyId,
 			message: `VOTE:${gameState.round}:${voteType}:${votedPrompt?.player_id}`,
 			is_system: true,
 		});
+
+		if (error) {
+			console.error("[RUINED] Failed to submit vote:", error);
+		} else {
+			console.log("[RUINED] Vote submitted successfully");
+		}
 	};
 
 	const handleSendMessage = (e?: React.FormEvent) => {

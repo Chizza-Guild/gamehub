@@ -5,6 +5,7 @@
 ### lobby
 
 -   Fix the mouse request thingy on other pages STILL DOESNT WORK
+-   Gets glitched if you leave a lobby and join a new one before the server kicks you
 
 ### maze
 
